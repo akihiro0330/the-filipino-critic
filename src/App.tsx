@@ -14,6 +14,8 @@ import {
   motion,
 } from 'motion/react'
 
+import { Analytics } from '@vercel/analytics/react'
+
 import { ProtectedAdminRoute } from './components/admin/ProtectedAdminRoute'
 import { Header } from './components/layout/Header'
 import { LoadingIntro } from './components/ui/LoadingIntro'
@@ -215,6 +217,8 @@ function App() {
           />
         </Routes>
       </motion.div>
+
+      <Analytics />
     </>
   )
 }
