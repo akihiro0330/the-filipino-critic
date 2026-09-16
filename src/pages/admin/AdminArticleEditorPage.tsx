@@ -36,6 +36,7 @@ import {
 import { AdminArticlePreview } from '../../components/admin/AdminArticlePreview'
 import { PublishReviewDialog } from '../../components/admin/PublishReviewDialog'
 import { PublicationStateDialog } from '../../components/admin/PublicationStateDialog'
+import { EditorialStatusPanel } from '../../components/admin/EditorialStatusPanel'
 import { AdminLayout } from '../../components/admin/AdminLayout'
 import { UnsavedChangesDialog } from '../../components/admin/UnsavedChangesDialog'
 import { useAuth } from '../../context/AuthContext'
@@ -1776,6 +1777,42 @@ export function AdminArticleEditorPage() {
           </button>
         </div>
       </div>
+
+      <EditorialStatusPanel
+        status={
+          currentStatus
+        }
+        publishedAt={
+          article?.published_at ??
+          null
+        }
+        updatedAt={
+          article?.updated_at ??
+          null
+        }
+        sourceCount={
+          form.sources.filter(
+            (source) =>
+              source.label.trim() &&
+              source.url.trim(),
+          ).length
+        }
+        metaTitle={
+          form.metaTitle
+        }
+        metaDescription={
+          form.metaDescription
+        }
+        featured={
+          form.isFeatured
+        }
+        trending={
+          form.isTrending
+        }
+        trendingRank={
+          form.trendingRank
+        }
+      />
 
       <div
         className="
