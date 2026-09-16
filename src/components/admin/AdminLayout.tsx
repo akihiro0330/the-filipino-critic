@@ -1,6 +1,7 @@
 import {
   FileText,
   FolderKanban,
+  Images,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -10,6 +11,7 @@ import {
 
 import {
   useState,
+  type ReactNode,
 } from 'react'
 
 import {
@@ -20,7 +22,7 @@ import {
 import { useAuth } from '../../context/AuthContext'
 
 interface AdminLayoutProps {
-  children: React.ReactNode
+  children: ReactNode
 }
 
 const navigation = [
@@ -40,6 +42,12 @@ const navigation = [
     label: 'Categories',
     to: '/admin/categories',
     icon: FolderKanban,
+    end: false,
+  },
+  {
+    label: 'Media',
+    to: '/admin/media',
+    icon: Images,
     end: false,
   },
 ]
@@ -294,6 +302,7 @@ export function AdminLayout({
               onClick={() =>
                 setMobileOpen(true)
               }
+              aria-label="Open admin navigation"
               className="
                 flex
                 h-10
@@ -363,17 +372,8 @@ function AdminSidebar({
           "
         />
 
-        <div
-          className="
-            min-w-0
-          "
-        >
-          <p
-            className="
-              truncate
-              font-semibold
-            "
-          >
+        <div className="min-w-0">
+          <p className="truncate font-semibold">
             The Filipino Critic
           </p>
 
@@ -406,12 +406,7 @@ function AdminSidebar({
           Workspace
         </p>
 
-        <nav
-          className="
-            mt-3
-            space-y-1
-          "
-        >
+        <nav className="mt-3 space-y-1">
           {navigation.map(
             ({
               label,
@@ -454,7 +449,6 @@ function AdminSidebar({
                 `}
               >
                 <Icon size={17} />
-
                 {label}
               </NavLink>
             ),
@@ -484,17 +478,11 @@ function AdminSidebar({
           "
         >
           <Plus size={16} />
-
           New Article
         </NavLink>
       </div>
 
-      <div
-        className="
-          mt-auto
-          pt-8
-        "
-      >
+      <div className="mt-auto pt-8">
         <div
           className="
             rounded-[18px]
@@ -504,23 +492,11 @@ function AdminSidebar({
             p-3
           "
         >
-          <p
-            className="
-              truncate
-              text-sm
-              font-semibold
-            "
-          >
+          <p className="truncate text-sm font-semibold">
             {profileName}
           </p>
 
-          <p
-            className="
-              mt-1
-              text-xs
-              text-white/40
-            "
-          >
+          <p className="mt-1 text-xs text-white/40">
             Administrator
           </p>
         </div>
@@ -548,7 +524,6 @@ function AdminSidebar({
           "
         >
           <LogOut size={17} />
-
           Sign out
         </button>
       </div>

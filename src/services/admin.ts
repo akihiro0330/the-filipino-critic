@@ -38,6 +38,27 @@ export interface UploadedArticleImage {
   path: string
 }
 
+export interface CategoryPostReference {
+  id: string
+  title: string
+  slug: string
+  status: PostStatus
+}
+
+export interface CategoryDeleteCheck {
+  canDelete: boolean
+  isProtected: boolean
+  references: CategoryPostReference[]
+}
+
+const PROTECTED_CATEGORY_SLUGS =
+  new Set([
+    'politics',
+    'public-issues',
+    'opinion',
+    'accountability',
+  ])
+
 export async function getAdminDashboardStats(): Promise<AdminDashboardStats> {
   const [
     totalResult,
@@ -353,9 +374,109 @@ export async function createCategory(
   return data as CategoryRow
 }
 
+export async function checkCategoryDeletion(
+  categoryId: string,
+): Promise<CategoryDeleteCheck> {
+  const {
+    data: category,
+    error: categoryError,
+  } = await supabase
+    .from('categories')
+    .select('id, name, slug')
+    .eq('id', categoryId)
+    .maybeSingle()
+
+  if (categoryError) {
+    throw new Error(
+      categoryError.message ||
+        'Unable to inspect category.',
+    )
+  }
+
+  if (!category) {
+    throw new Error(
+      'The selected category no longer exists.',
+    )
+  }
+
+  const isProtected =
+    PROTECTED_CATEGORY_SLUGS.has(
+      category.slug,
+    )
+
+  const {
+    data: posts,
+    error: postsError,
+  } = await supabase
+    .from('posts')
+    .select(
+      'id, title, slug, status',
+    )
+    .eq(
+      'category_id',
+      categoryId,
+    )
+    .order(
+      'updated_at',
+      {
+        ascending: false,
+      },
+    )
+
+  if (postsError) {
+    throw new Error(
+      postsError.message ||
+        'Unable to check category references.',
+    )
+  }
+
+  const references =
+    (posts ?? []).map(
+      (post) => ({
+        id: String(post.id),
+        title: String(post.title),
+        slug: String(post.slug),
+        status:
+          post.status as PostStatus,
+      }),
+    )
+
+  return {
+    canDelete:
+      !isProtected &&
+      references.length === 0,
+    isProtected,
+    references,
+  }
+}
+
 export async function deleteCategory(
   categoryId: string,
 ): Promise<void> {
+  const check =
+    await checkCategoryDeletion(
+      categoryId,
+    )
+
+  if (check.isProtected) {
+    throw new Error(
+      'Core categories cannot be deleted.',
+    )
+  }
+
+  if (
+    check.references.length > 0
+  ) {
+    const articleWord =
+      check.references.length === 1
+        ? 'article'
+        : 'articles'
+
+    throw new Error(
+      `Deletion blocked. This category is still used by ${check.references.length} ${articleWord}.`,
+    )
+  }
+
   const {
     error,
   } = await supabase
@@ -534,78 +655,21 @@ export async function getAdminPostById(
 export async function createAdminPost(
   input: AdminPostEditorInput,
 ): Promise<string> {
-  const publishedAt =
-    input.status ===
-    'published'
-      ? new Date().toISOString()
-      : null
-
   const {
     data,
     error,
-  } = await supabase
-    .from('posts')
-    .insert({
-      title:
-        input.title.trim(),
+  } = await supabase.rpc(
+    'save_admin_post',
+    {
+      p_post_id:
+        null,
 
-      slug:
-        input.slug.trim(),
-
-      excerpt:
-        input.excerpt.trim(),
-
-      content:
-        input.content,
-
-      featured_image:
-        normalizeNullableString(
-          input.featured_image,
+      p_input:
+        buildAdminPostRpcInput(
+          input,
         ),
-
-      image_alt:
-        normalizeNullableString(
-          input.image_alt,
-        ),
-
-      category_id:
-        input.category_id,
-
-      author_id:
-        input.author_id,
-
-      status:
-        input.status,
-
-      is_featured:
-        input.is_featured,
-
-      is_trending:
-        input.is_trending,
-
-      trending_rank:
-        input.is_trending
-          ? input.trending_rank
-          : null,
-
-      reading_time_minutes:
-        input.reading_time_minutes,
-
-      meta_title:
-        normalizeNullableString(
-          input.meta_title,
-        ),
-
-      meta_description:
-        normalizeNullableString(
-          input.meta_description,
-        ),
-
-      published_at:
-        publishedAt,
-    })
-    .select('id')
-    .single()
+    },
+  )
 
   if (error) {
     throw new Error(
@@ -614,12 +678,16 @@ export async function createAdminPost(
     )
   }
 
-  await replacePostSources(
-    data.id,
-    input.sources,
-  )
+  if (
+    typeof data !== 'string' ||
+    !data
+  ) {
+    throw new Error(
+      'The article was saved, but no article ID was returned.',
+    )
+  }
 
-  return data.id
+  return data
 }
 
 export async function updateAdminPost(
@@ -627,106 +695,19 @@ export async function updateAdminPost(
   input: AdminPostEditorInput,
 ): Promise<void> {
   const {
-    data: existingPost,
-    error: existingError,
-  } = await supabase
-    .from('posts')
-    .select(
-      'published_at',
-    )
-    .eq(
-      'id',
-      postId,
-    )
-    .maybeSingle()
-
-  if (existingError) {
-    throw new Error(
-      existingError.message ||
-        'Unable to inspect article.',
-    )
-  }
-
-  let publishedAt =
-    existingPost?.published_at ??
-    null
-
-  if (
-    input.status ===
-      'published' &&
-    !publishedAt
-  ) {
-    publishedAt =
-      new Date().toISOString()
-  }
-
-  const {
     error,
-  } = await supabase
-    .from('posts')
-    .update({
-      title:
-        input.title.trim(),
+  } = await supabase.rpc(
+    'save_admin_post',
+    {
+      p_post_id:
+        postId,
 
-      slug:
-        input.slug.trim(),
-
-      excerpt:
-        input.excerpt.trim(),
-
-      content:
-        input.content,
-
-      featured_image:
-        normalizeNullableString(
-          input.featured_image,
+      p_input:
+        buildAdminPostRpcInput(
+          input,
         ),
-
-      image_alt:
-        normalizeNullableString(
-          input.image_alt,
-        ),
-
-      category_id:
-        input.category_id,
-
-      author_id:
-        input.author_id,
-
-      status:
-        input.status,
-
-      is_featured:
-        input.is_featured,
-
-      is_trending:
-        input.is_trending,
-
-      trending_rank:
-        input.is_trending
-          ? input.trending_rank
-          : null,
-
-      reading_time_minutes:
-        input.reading_time_minutes,
-
-      meta_title:
-        normalizeNullableString(
-          input.meta_title,
-        ),
-
-      meta_description:
-        normalizeNullableString(
-          input.meta_description,
-        ),
-
-      published_at:
-        publishedAt,
-    })
-    .eq(
-      'id',
-      postId,
-    )
+    },
+  )
 
   if (error) {
     throw new Error(
@@ -734,11 +715,6 @@ export async function updateAdminPost(
         'Unable to update article.',
     )
   }
-
-  await replacePostSources(
-    postId,
-    input.sources,
-  )
 }
 
 export async function uploadArticleImage(
@@ -836,81 +812,81 @@ export async function deleteArticleImage(
   }
 }
 
-async function replacePostSources(
-  postId: string,
-  sources: AdminPostEditorInput['sources'],
-): Promise<void> {
-  const {
-    error: deleteError,
-  } = await supabase
-    .from('post_sources')
-    .delete()
-    .eq(
-      'post_id',
-      postId,
-    )
+function buildAdminPostRpcInput(
+  input: AdminPostEditorInput,
+): Record<string, unknown> {
+  return {
+    title:
+      input.title.trim(),
 
-  if (deleteError) {
-    throw new Error(
-      deleteError.message ||
-        'Unable to update article sources.',
-    )
-  }
+    slug:
+      input.slug.trim(),
 
-  const cleanSources =
-    sources
-      .map(
-        (source) => ({
-          label:
-            source.label.trim(),
+    excerpt:
+      input.excerpt.trim(),
 
-          url:
-            source.url.trim(),
-        }),
-      )
-      .filter(
-        (source) =>
-          source.label &&
-          source.url,
-      )
+    content:
+      input.content,
 
-  if (
-    cleanSources.length ===
-    0
-  ) {
-    return
-  }
-
-  const {
-    error: insertError,
-  } = await supabase
-    .from('post_sources')
-    .insert(
-      cleanSources.map(
-        (
-          source,
-          index,
-        ) => ({
-          post_id:
-            postId,
-
-          label:
-            source.label,
-
-          url:
-            source.url,
-
-          sort_order:
-            index,
-        }),
+    featured_image:
+      normalizeNullableString(
+        input.featured_image,
       ),
-    )
 
-  if (insertError) {
-    throw new Error(
-      insertError.message ||
-        'Unable to save article sources.',
-    )
+    image_alt:
+      normalizeNullableString(
+        input.image_alt,
+      ),
+
+    category_id:
+      input.category_id,
+
+    author_id:
+      input.author_id,
+
+    status:
+      input.status,
+
+    is_featured:
+      input.is_featured,
+
+    is_trending:
+      input.is_trending,
+
+    trending_rank:
+      input.is_trending
+        ? input.trending_rank
+        : null,
+
+    reading_time_minutes:
+      input.reading_time_minutes,
+
+    meta_title:
+      normalizeNullableString(
+        input.meta_title,
+      ),
+
+    meta_description:
+      normalizeNullableString(
+        input.meta_description,
+      ),
+
+    sources:
+      input.sources
+        .map(
+          (source) => ({
+            label:
+              source.label.trim(),
+
+            url:
+              source.url.trim(),
+          }),
+        )
+        .filter(
+          (source) =>
+            source.label ||
+            source.url,
+        ),
   }
 }
 

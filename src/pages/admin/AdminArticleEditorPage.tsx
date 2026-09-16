@@ -7,6 +7,7 @@ import {
   Globe2,
   GripVertical,
   Image as ImageIcon,
+  Images,
   Link2,
   LoaderCircle,
   Plus,
@@ -32,6 +33,7 @@ import {
 } from 'react-router-dom'
 
 import { AdminArticlePreview } from '../../components/admin/AdminArticlePreview'
+import { PublishReviewDialog } from '../../components/admin/PublishReviewDialog'
 import { AdminLayout } from '../../components/admin/AdminLayout'
 import { UnsavedChangesDialog } from '../../components/admin/UnsavedChangesDialog'
 import { useAuth } from '../../context/AuthContext'
@@ -45,6 +47,11 @@ import type {
   PostContentSection,
   PostStatus,
 } from '../../types/database'
+
+import {
+  getMediaLibrary,
+  type MediaItem,
+} from '../../services/media'
 
 interface EditorFormState {
   title: string
@@ -220,6 +227,26 @@ export function AdminArticleEditorPage() {
     useState(false)
 
   const [
+    publishReviewOpen,
+    setPublishReviewOpen,
+  ] =
+    useState(false)
+
+  const [
+    mediaPickerOpen,
+    setMediaPickerOpen,
+  ] =
+    useState(false)
+
+  const [
+    currentStatus,
+    setCurrentStatus,
+  ] =
+    useState<PostStatus>(
+      'draft',
+    )
+
+  const [
     savedSnapshot,
     setSavedSnapshot,
   ] =
@@ -238,6 +265,10 @@ export function AdminArticleEditorPage() {
 
       setSlugEdited(
         false,
+      )
+
+      setCurrentStatus(
+        'draft',
       )
 
       setSavedSnapshot(
@@ -325,6 +356,10 @@ export function AdminArticleEditorPage() {
 
     setSlugEdited(
       true,
+    )
+
+    setCurrentStatus(
+      article.status,
     )
 
     setSavedSnapshot(
@@ -745,31 +780,97 @@ export function AdminArticleEditorPage() {
     }
   }
 
-  function validate():
+  function validateForSave():
     | string
     | null {
     if (
       !form.title.trim()
     ) {
-      return 'Article title is required.'
+      return 'Add a title before saving this draft.'
     }
 
     if (
       !form.slug.trim()
     ) {
-      return 'Article slug is required.'
+      return 'Add a valid article slug before saving.'
+    }
+
+    if (
+      form.readingTime &&
+      (
+        !Number.isFinite(
+          Number(
+            form.readingTime,
+          ),
+        ) ||
+        Number(
+          form.readingTime,
+        ) < 1
+      )
+    ) {
+      return 'Reading time must be at least 1 minute.'
+    }
+
+    if (
+      form.isTrending &&
+      form.trendingRank &&
+      (
+        !Number.isFinite(
+          Number(
+            form.trendingRank,
+          ),
+        ) ||
+        Number(
+          form.trendingRank,
+        ) < 1
+      )
+    ) {
+      return 'Trending rank must be a positive number when provided.'
+    }
+
+    return null
+  }
+
+  function validateSourceUrl(
+    value: string,
+  ) {
+    try {
+      const url =
+        new URL(
+          value,
+        )
+
+      return (
+        url.protocol ===
+          'http:' ||
+        url.protocol ===
+          'https:'
+      )
+    } catch {
+      return false
+    }
+  }
+
+  function validateForPublish():
+    | string
+    | null {
+    const saveError =
+      validateForSave()
+
+    if (saveError) {
+      return saveError
     }
 
     if (
       !form.excerpt.trim()
     ) {
-      return 'Article excerpt is required.'
+      return 'Add an article excerpt before publishing.'
     }
 
     if (
       !form.categoryId
     ) {
-      return 'Please select a category.'
+      return 'Select a category before publishing.'
     }
 
     const hasContent =
@@ -785,7 +886,19 @@ export function AdminArticleEditorPage() {
       )
 
     if (!hasContent) {
-      return 'Add at least one paragraph to the article.'
+      return 'Add at least one paragraph before publishing.'
+    }
+
+    if (
+      !form.featuredImage.trim()
+    ) {
+      return 'Add a featured image before publishing.'
+    }
+
+    if (
+      !form.imageAlt.trim()
+    ) {
+      return 'Add descriptive alt text for the featured image before publishing.'
     }
 
     if (
@@ -797,10 +910,100 @@ export function AdminArticleEditorPage() {
         ) < 1
       )
     ) {
-      return 'Trending articles need a valid rank.'
+      return 'Trending articles need a valid rank before publishing.'
+    }
+
+    for (
+      let index = 0;
+      index <
+      form.sources.length;
+      index += 1
+    ) {
+      const source =
+        form.sources[
+          index
+        ]
+
+      const label =
+        source.label.trim()
+
+      const url =
+        source.url.trim()
+
+      if (
+        !label &&
+        !url
+      ) {
+        continue
+      }
+
+      if (
+        !label ||
+        !url
+      ) {
+        return `Source ${index + 1} needs both a label and URL before publishing.`
+      }
+
+      if (
+        !validateSourceUrl(
+          url,
+        )
+      ) {
+        return `Source ${index + 1} needs a valid http:// or https:// URL.`
+      }
     }
 
     return null
+  }
+
+  function getPublishingWarnings() {
+    const warnings: string[] =
+      []
+
+    if (
+      !form.metaTitle.trim()
+    ) {
+      warnings.push(
+        'SEO title is empty.',
+      )
+    }
+
+    if (
+      !form.metaDescription.trim()
+    ) {
+      warnings.push(
+        'Meta description is empty.',
+      )
+    }
+
+    if (
+      form.excerpt.trim().length >
+      180
+    ) {
+      warnings.push(
+        'Excerpt is longer than the recommended 180 characters.',
+      )
+    }
+
+    if (
+      form.metaTitle.trim()
+        .length > 60
+    ) {
+      warnings.push(
+        'SEO title is longer than the recommended 60 characters.',
+      )
+    }
+
+    if (
+      form.metaDescription
+        .trim().length > 160
+    ) {
+      warnings.push(
+        'Meta description is longer than the recommended 160 characters.',
+      )
+    }
+
+    return warnings
   }
 
   function buildInput(
@@ -895,36 +1098,96 @@ export function AdminArticleEditorPage() {
         null,
 
       sources:
-        form.sources,
+        form.sources
+          .map(
+            (source) => ({
+              ...source,
+              label:
+                source.label.trim(),
+              url:
+                source.url.trim(),
+            }),
+          )
+          .filter(
+            (source) =>
+              source.label ||
+              source.url,
+          ),
     }
   }
 
-  async function saveArticle(
-    status: PostStatus,
-  ) {
+  function requestPublish() {
     const validationError =
-      validate()
+      validateForPublish()
 
-    if (
-      validationError
-    ) {
+    if (validationError) {
       toast.warning(
-        'Article needs attention',
+        'Not ready to publish',
         validationError,
       )
 
       return
     }
 
+    setPublishReviewOpen(
+      true,
+    )
+  }
+
+  async function saveArticle(
+    requestedStatus: PostStatus,
+  ) {
+    const targetStatus =
+      currentStatus ===
+        'published' &&
+      requestedStatus ===
+        'draft'
+        ? 'published'
+        : requestedStatus
+
+    const validationError =
+      targetStatus ===
+      'published'
+        ? validateForPublish()
+        : validateForSave()
+
+    if (
+      validationError
+    ) {
+      toast.warning(
+        targetStatus ===
+          'published'
+          ? 'Not ready to publish'
+          : 'Draft needs attention',
+        validationError,
+      )
+
+      return
+    }
+
+    const publishingWarnings =
+      targetStatus ===
+        'published'
+        ? getPublishingWarnings()
+        : []
+
     try {
       const input =
         buildInput(
-          status,
+          targetStatus,
         )
 
       if (isEditing) {
+        const wasPublished =
+          currentStatus ===
+          'published'
+
         await update(
           input,
+        )
+
+        setCurrentStatus(
+          targetStatus,
         )
 
         setSavedSnapshot(
@@ -934,23 +1197,33 @@ export function AdminArticleEditorPage() {
         )
 
         if (
-          status ===
+          targetStatus ===
           'published'
         ) {
           toast.success(
-            article?.status ===
-              'published'
+            wasPublished
               ? 'Published article updated'
               : 'Article published',
-            article?.status ===
-              'published'
+            wasPublished
               ? 'Your latest changes are now live.'
               : 'The article is now visible on the public website.',
           )
+
+          if (
+            publishingWarnings.length >
+            0
+          ) {
+            toast.info(
+              'Publishing recommendations',
+              publishingWarnings.join(
+                ' ',
+              ),
+            )
+          }
         } else {
           toast.success(
             'Draft saved',
-            'Your article changes have been saved successfully.',
+            'Your unfinished article has been saved successfully.',
           )
         }
 
@@ -962,6 +1235,10 @@ export function AdminArticleEditorPage() {
           input,
         )
 
+      setCurrentStatus(
+        targetStatus,
+      )
+
       setSavedSnapshot(
         snapshotForm(
           form,
@@ -969,17 +1246,29 @@ export function AdminArticleEditorPage() {
       )
 
       if (
-        status ===
+        targetStatus ===
         'published'
       ) {
         toast.success(
           'Article published',
           'The article is now live on The Filipino Critic.',
         )
+
+        if (
+          publishingWarnings.length >
+          0
+        ) {
+          toast.info(
+            'Publishing recommendations',
+            publishingWarnings.join(
+              ' ',
+            ),
+          )
+        }
       } else {
         toast.success(
           'Draft created',
-          'Your new article has been saved as a draft.',
+          'Your unfinished article has been saved as a draft.',
         )
       }
 
@@ -995,14 +1284,14 @@ export function AdminArticleEditorPage() {
       caughtError
     ) {
       toast.error(
-        status ===
+        targetStatus ===
           'published'
           ? 'Publishing failed'
           : 'Save failed',
 
         getErrorMessage(
           caughtError,
-          status ===
+          targetStatus ===
             'published'
             ? 'The article could not be published.'
             : 'The article could not be saved.',
@@ -1115,6 +1404,95 @@ export function AdminArticleEditorPage() {
         sources={
           form.sources
         }
+      />
+
+      <PublishReviewDialog
+        open={
+          publishReviewOpen
+        }
+        currentStatus={
+          currentStatus
+        }
+        title={
+          form.title
+        }
+        slug={
+          form.slug
+        }
+        excerpt={
+          form.excerpt
+        }
+        hasCategory={
+          Boolean(
+            form.categoryId,
+          )
+        }
+        hasContent={
+          form.sections.some(
+            (section) =>
+              (
+                section.paragraphs ??
+                []
+              ).some(
+                (paragraph) =>
+                  paragraph.trim(),
+              ),
+          )
+        }
+        featuredImage={
+          form.featuredImage
+        }
+        imageAlt={
+          form.imageAlt
+        }
+        readingTime={
+          form.readingTime
+        }
+        sources={
+          form.sources
+        }
+        metaTitle={
+          form.metaTitle
+        }
+        metaDescription={
+          form.metaDescription
+        }
+        warnings={
+          getPublishingWarnings()
+        }
+        saving={
+          saving
+        }
+        onClose={() =>
+          setPublishReviewOpen(
+            false,
+          )
+        }
+        onConfirm={() => {
+          setPublishReviewOpen(
+            false,
+          )
+
+          void saveArticle(
+            'published',
+          )
+        }}
+      />
+
+      <MediaPickerDialog
+        open={mediaPickerOpen}
+        onClose={() => setMediaPickerOpen(false)}
+        onSelect={(item) => {
+          updateField('featuredImage', item.url)
+          if (!form.imageAlt.trim()) {
+            updateField('imageAlt', mediaNameToAlt(item.name))
+          }
+          setMediaPickerOpen(false)
+          toast.success(
+            'Media selected',
+            'The selected image is now the featured image. Save the article to apply it.',
+          )
+        }}
       />
 
       <div
@@ -1242,7 +1620,10 @@ export function AdminArticleEditorPage() {
             }
             onClick={() =>
               void saveArticle(
-                'draft',
+                currentStatus ===
+                  'published'
+                  ? 'published'
+                  : 'draft',
               )
             }
             className="
@@ -1270,7 +1651,10 @@ export function AdminArticleEditorPage() {
 
             {saving
               ? 'Saving...'
-              : 'Save Draft'}
+              : currentStatus ===
+                  'published'
+                ? 'Save Changes'
+                : 'Save Draft'}
           </button>
 
           <button
@@ -1279,10 +1663,8 @@ export function AdminArticleEditorPage() {
               saving ||
               uploadingImage
             }
-            onClick={() =>
-              void saveArticle(
-                'published',
-              )
+            onClick={
+              requestPublish
             }
             className="
               inline-flex
@@ -1306,7 +1688,7 @@ export function AdminArticleEditorPage() {
 
             {saving
               ? 'Saving...'
-              : article?.status ===
+              : currentStatus ===
                   'published'
                 ? 'Update Published'
                 : 'Publish'}
@@ -1399,7 +1781,7 @@ export function AdminArticleEditorPage() {
 
             <EditorLabel
               label="Excerpt"
-              required
+              hint="Required to publish"
             >
               <textarea
                 value={
@@ -1981,7 +2363,7 @@ export function AdminArticleEditorPage() {
           >
             <EditorLabel
               label="Category"
-              required
+              hint="Required to publish"
             >
               <select
                 value={
@@ -2240,6 +2622,22 @@ export function AdminArticleEditorPage() {
               )}
             </label>
 
+            <button
+              type="button"
+              disabled={uploadingImage}
+              onClick={() => setMediaPickerOpen(true)}
+              className="
+                flex h-11 w-full items-center justify-center gap-2
+                rounded-[16px] border border-white/[0.10]
+                bg-white/[0.04] text-sm font-semibold text-white/65
+                transition hover:border-white/[0.16] hover:bg-white/[0.07]
+                hover:text-white disabled:opacity-40
+              "
+            >
+              <Images size={15} />
+              Choose from Media Library
+            </button>
+
             <div
               className="
                 flex
@@ -2483,6 +2881,133 @@ export function AdminArticleEditorPage() {
   )
 }
 
+function mediaNameToAlt(name: string) {
+  return name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').replace(/^\d+\s*/, '').trim()
+}
+
+function MediaPickerDialog({ open, onClose, onSelect }: {
+  open: boolean
+  onClose: () => void
+  onSelect: (item: MediaItem) => void
+}) {
+  const [media, setMedia] = useState<MediaItem[]>([])
+  const [loadingMedia, setLoadingMedia] = useState(false)
+  const [mediaError, setMediaError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    async function loadMedia() {
+      setLoadingMedia(true)
+      setMediaError(null)
+      try {
+        const items = await getMediaLibrary()
+        if (active) setMedia(items)
+      } catch (caughtError) {
+        if (active) setMediaError(getErrorMessage(caughtError, 'The Media Library could not be loaded.'))
+      } finally {
+        if (active) setLoadingMedia(false)
+      }
+    }
+    void loadMedia()
+    return () => { active = false }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
+  const filteredMedia = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return media
+    return media.filter((item) =>
+      item.name.toLowerCase().includes(normalized) ||
+      item.path.toLowerCase().includes(normalized),
+    )
+  }, [media, query])
+
+  if (!open) return null
+
+  return (
+    <div
+      className="fixed inset-0 z-[180] flex items-center justify-center bg-black/80 p-4 backdrop-blur-xl"
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}
+    >
+      <div role="dialog" aria-modal="true" aria-labelledby="media-picker-title"
+        className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-[26px] border border-white/[0.10] bg-[#0d1118] shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] px-5 py-5 sm:px-6">
+          <div>
+            <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-[#d64a52]">Featured Image</p>
+            <h2 id="media-picker-title" className="mt-1 text-xl font-semibold">Choose from Media Library</h2>
+            <p className="mt-1 text-xs text-white/35">Reuse an existing image without uploading another copy.</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close Media Library"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-white/55 transition hover:bg-white/[0.10] hover:text-white">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="border-b border-white/[0.07] p-4 sm:px-6">
+          <div className="relative">
+            <Search size={15} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-white/25" />
+            <input autoFocus type="search" value={query} onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search Media Library..." className={`${inputClass} pl-11`} />
+          </div>
+        </div>
+
+        <div className="min-h-[320px] flex-1 overflow-y-auto p-4 sm:p-6">
+          {loadingMedia ? (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div key={index} className="aspect-[4/3] animate-pulse rounded-[18px] bg-white/[0.06]" />
+              ))}
+            </div>
+          ) : mediaError ? (
+            <div className="flex min-h-[300px] items-center justify-center text-center">
+              <div><ImageIcon size={24} className="mx-auto text-white/20" /><p className="mt-3 text-sm text-red-200">{mediaError}</p></div>
+            </div>
+          ) : filteredMedia.length === 0 ? (
+            <div className="flex min-h-[300px] items-center justify-center text-center">
+              <div>
+                <Images size={25} className="mx-auto text-white/20" />
+                <p className="mt-3 text-sm font-semibold text-white/55">{query.trim() ? 'No matching images' : 'No images in the Media Library'}</p>
+                <p className="mt-1 text-xs text-white/30">{query.trim() ? 'Try a different search.' : 'Upload an image from the Featured Image panel first.'}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+              {filteredMedia.map((item) => (
+                <button key={item.path} type="button" onClick={() => onSelect(item)}
+                  className="group overflow-hidden rounded-[18px] border border-white/[0.08] bg-white/[0.03] text-left transition hover:border-[#AD2730]/55 hover:bg-white/[0.06]">
+                  <div className="aspect-[4/3] overflow-hidden bg-black/25">
+                    <img src={item.url} alt={item.name} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+                  </div>
+                  <div className="p-3">
+                    <p className="truncate text-xs font-semibold text-white/65">{item.name}</p>
+                    <p className="mt-1 truncate text-[9px] text-white/25">{item.path}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-4 border-t border-white/[0.08] px-5 py-4 sm:px-6">
+          <p className="text-[10px] text-white/30">{filteredMedia.length} {filteredMedia.length === 1 ? 'image' : 'images'}</p>
+          <button type="button" onClick={onClose}
+            className="rounded-full border border-white/[0.10] px-4 py-2 text-xs font-semibold text-white/60 transition hover:bg-white/[0.06] hover:text-white">Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function EditorSaveStatus({
   dirty,
   saving,
@@ -2623,10 +3148,12 @@ function EditorCard({
 function EditorLabel({
   label,
   required,
+  hint,
   children,
 }: {
   label: string
   required?: boolean
+  hint?: string
   children: ReactNode
 }) {
   return (
@@ -2650,6 +3177,12 @@ function EditorLabel({
             "
           >
             *
+          </span>
+        )}
+
+        {hint && (
+          <span className="ml-2 text-[10px] font-normal text-white/25">
+            {hint}
           </span>
         )}
       </span>

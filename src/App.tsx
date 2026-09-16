@@ -29,6 +29,7 @@ import { PlaceholderPage } from './pages/PlaceholderPage'
 import { AdminArticleEditorPage } from './pages/admin/AdminArticleEditorPage'
 import { AdminCategoriesPage } from './pages/admin/AdminCategoriesPage'
 import { AdminLoginPage } from './pages/admin/AdminLoginPage'
+import { AdminMediaPage } from './pages/admin/AdminMediaPage'
 import { AdminPage } from './pages/admin/AdminPage'
 import { AdminPostsPage } from './pages/admin/AdminPostsPage'
 
@@ -173,6 +174,15 @@ function App() {
             element={
               <ProtectedAdminRoute>
                 <AdminCategoriesPage />
+              </ProtectedAdminRoute>
+            }
+          />
+
+          <Route
+            path="/admin/media"
+            element={
+              <ProtectedAdminRoute>
+                <AdminMediaPage />
               </ProtectedAdminRoute>
             }
           />

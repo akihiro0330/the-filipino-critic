@@ -41,6 +41,18 @@ export interface UploadedMediaItem {
   url: string
 }
 
+export interface MediaPostReference {
+  id: string
+  title: string
+  slug: string
+  status: string
+}
+
+export interface MediaDeleteCheck {
+  canDelete: boolean
+  references: MediaPostReference[]
+}
+
 export async function getMediaLibrary():
   Promise<MediaItem[]> {
   const items =
@@ -274,9 +286,87 @@ export async function uploadMediaImage(
   }
 }
 
+export async function getMediaPostReferences(
+  imageUrl: string,
+): Promise<MediaPostReference[]> {
+  const {
+    data,
+    error,
+  } =
+    await supabase
+      .from('posts')
+      .select(
+        'id, title, slug, status',
+      )
+      .eq(
+        'featured_image',
+        imageUrl,
+      )
+      .order(
+        'updated_at',
+        {
+          ascending: false,
+        },
+      )
+
+  if (error) {
+    throw new Error(
+      error.message ||
+        'Unable to check whether this image is used by an article.',
+    )
+  }
+
+  return (
+    data ?? []
+  ).map(
+    (post) => ({
+      id: String(post.id),
+      title: String(post.title),
+      slug: String(post.slug),
+      status: String(post.status),
+    }),
+  )
+}
+
+export async function checkMediaDeletion(
+  imageUrl: string,
+): Promise<MediaDeleteCheck> {
+  const references =
+    await getMediaPostReferences(
+      imageUrl,
+    )
+
+  return {
+    canDelete:
+      references.length === 0,
+    references,
+  }
+}
+
 export async function deleteMediaImage(
   storagePath: string,
+  imageUrl?: string,
 ): Promise<void> {
+  if (imageUrl) {
+    const {
+      canDelete,
+      references,
+    } =
+      await checkMediaDeletion(
+        imageUrl,
+      )
+
+    if (!canDelete) {
+      const articleWord =
+        references.length === 1
+          ? 'article'
+          : 'articles'
+
+      throw new Error(
+        `Deletion blocked. This image is still used by ${references.length} ${articleWord}.`,
+      )
+    }
+  }
   const {
     error,
   } =

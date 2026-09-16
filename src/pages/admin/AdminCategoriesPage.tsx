@@ -1,7 +1,11 @@
 import {
+  AlertTriangle,
   FolderKanban,
+  LockKeyhole,
   Plus,
+  RefreshCw,
   Trash2,
+  X,
 } from 'lucide-react'
 
 import {
@@ -12,6 +16,13 @@ import {
 import { AdminLayout } from '../../components/admin/AdminLayout'
 import { useToast } from '../../context/ToastContext'
 import { useAdminCategories } from '../../hooks/useAdminCategories'
+
+import {
+  checkCategoryDeletion,
+  type CategoryPostReference,
+} from '../../services/admin'
+
+import type { CategoryRow } from '../../types/database'
 
 const PROTECTED_CATEGORY_SLUGS = new Set([
   'politics',
@@ -50,7 +61,30 @@ export function AdminCategoriesPage() {
   const [slug, setSlug] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)
   const [description, setDescription] = useState('')
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [
+    deletingCategory,
+    setDeletingCategory,
+  ] = useState<CategoryRow | null>(null)
+
+  const [
+    checkingDelete,
+    setCheckingDelete,
+  ] = useState(false)
+
+  const [
+    deletingId,
+    setDeletingId,
+  ] = useState<string | null>(null)
+
+  const [
+    deleteReferences,
+    setDeleteReferences,
+  ] = useState<CategoryPostReference[]>([])
+
+  const [
+    deleteCheckError,
+    setDeleteCheckError,
+  ] = useState<string | null>(null)
 
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
@@ -106,46 +140,126 @@ export function AdminCategoriesPage() {
     }
   }
 
-  async function handleDelete(
-    categoryId: string,
+  async function requestDelete(
+    category: CategoryRow,
   ) {
-    const target = categories.find(
-      (category) => category.id === categoryId,
-    )
-
-    if (!target) {
-      toast.error(
-        'Category not found',
-        'The selected category is no longer available.',
+    if (
+      PROTECTED_CATEGORY_SLUGS.has(
+        category.slug,
       )
-      return
-    }
-
-    if (PROTECTED_CATEGORY_SLUGS.has(target.slug)) {
+    ) {
       toast.warning(
         'Core category protected',
-        `“${target.name}” is used by the public site navigation and cannot be deleted here.`,
+        `“${category.name}” is required by the public site and cannot be deleted.`,
       )
       return
     }
 
-    const confirmed = window.confirm(
-      `Delete “${target.name}”? Articles using it will become uncategorized. This action cannot be undone.`,
-    )
+    setDeletingCategory(category)
+    setCheckingDelete(true)
+    setDeleteReferences([])
+    setDeleteCheckError(null)
 
-    if (!confirmed) {
+    try {
+      const result =
+        await checkCategoryDeletion(
+          category.id,
+        )
+
+      if (result.isProtected) {
+        setDeleteCheckError(
+          'This is a protected core category and cannot be deleted.',
+        )
+        return
+      }
+
+      setDeleteReferences(
+        result.references,
+      )
+    } catch (caughtError) {
+      setDeleteCheckError(
+        getErrorMessage(
+          caughtError,
+          'The CMS could not verify whether this category is in use.',
+        ),
+      )
+    } finally {
+      setCheckingDelete(false)
+    }
+  }
+
+  function closeDeleteDialog() {
+    if (deletingId) {
       return
     }
 
-    setDeletingId(categoryId)
+    setDeletingCategory(null)
+    setDeleteReferences([])
+    setDeleteCheckError(null)
+  }
+
+  async function handleDelete() {
+    if (!deletingCategory) {
+      return
+    }
+
+    const target =
+      deletingCategory
+
+    setDeletingId(
+      target.id,
+    )
 
     try {
-      await removeCategory(categoryId)
+      const latestCheck =
+        await checkCategoryDeletion(
+          target.id,
+        )
+
+      if (
+        latestCheck.isProtected
+      ) {
+        setDeleteCheckError(
+          'This is a protected core category and cannot be deleted.',
+        )
+
+        toast.warning(
+          'Core category protected',
+          `“${target.name}” cannot be deleted.`,
+        )
+        return
+      }
+
+      if (
+        !latestCheck.canDelete
+      ) {
+        setDeleteReferences(
+          latestCheck.references,
+        )
+
+        toast.error(
+          'Deletion blocked',
+          `“${target.name}” is still used by ${latestCheck.references.length} ${
+            latestCheck.references.length === 1
+              ? 'article'
+              : 'articles'
+          }.`,
+        )
+        return
+      }
+
+      await removeCategory(
+        target.id,
+      )
 
       toast.success(
         'Category deleted',
         `“${target.name}” has been removed.`,
       )
+
+      setDeletingCategory(null)
+      setDeleteReferences([])
+      setDeleteCheckError(null)
     } catch (caughtError) {
       toast.error(
         'Category deletion failed',
@@ -517,7 +631,7 @@ export function AdminCategoriesPage() {
                         : `Delete ${category.name}`
                     }
                     onClick={() =>
-                      void handleDelete(category.id)
+                      void requestDelete(category)
                     }
                     className="
                       flex
@@ -560,6 +674,287 @@ export function AdminCategoriesPage() {
           )}
         </section>
       </div>
+
+      {deletingCategory && (
+        <DeleteCategoryDialog
+          category={deletingCategory}
+          checking={checkingDelete}
+          deleting={
+            deletingId ===
+            deletingCategory.id
+          }
+          references={deleteReferences}
+          checkError={deleteCheckError}
+          onCancel={closeDeleteDialog}
+          onConfirm={() =>
+            void handleDelete()
+          }
+        />
+      )}
     </AdminLayout>
+  )
+}
+
+
+function DeleteCategoryDialog({
+  category,
+  checking,
+  deleting,
+  references,
+  checkError,
+  onCancel,
+  onConfirm,
+}: {
+  category: CategoryRow
+  checking: boolean
+  deleting: boolean
+  references: CategoryPostReference[]
+  checkError: string | null
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const blocked =
+    references.length > 0 ||
+    Boolean(checkError)
+
+  return (
+    <div
+      className="
+        fixed
+        inset-0
+        z-[200]
+        flex
+        items-center
+        justify-center
+        bg-black/80
+        p-4
+        backdrop-blur-md
+      "
+      onMouseDown={(event) => {
+        if (
+          !deleting &&
+          event.target ===
+            event.currentTarget
+        ) {
+          onCancel()
+        }
+      }}
+    >
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-category-title"
+        className="
+          w-full
+          max-w-lg
+          rounded-[24px]
+          border
+          border-white/[0.10]
+          bg-[#11151c]
+          p-6
+          shadow-2xl
+        "
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div
+            className="
+              flex
+              h-11
+              w-11
+              items-center
+              justify-center
+              rounded-full
+              bg-red-500/10
+              text-red-300
+            "
+          >
+            <Trash2 size={18} />
+          </div>
+
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={onCancel}
+            aria-label="Close delete category dialog"
+            className="
+              flex
+              h-9
+              w-9
+              items-center
+              justify-center
+              rounded-full
+              bg-white/[0.05]
+              text-white/40
+              transition
+              hover:bg-white/[0.08]
+              hover:text-white
+              disabled:opacity-30
+            "
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <h2
+          id="delete-category-title"
+          className="mt-5 text-xl font-semibold"
+        >
+          Delete category?
+        </h2>
+
+        <p className="mt-2 text-sm leading-6 text-white/40">
+          Checking whether “{category.name}” can be safely removed.
+        </p>
+
+        {checking ? (
+          <div className="mt-4 flex items-center gap-3 rounded-[16px] border border-white/[0.08] bg-white/[0.04] p-4">
+            <RefreshCw
+              size={16}
+              className="shrink-0 animate-spin text-white/45"
+            />
+            <p className="text-sm text-white/45">
+              Checking article references...
+            </p>
+          </div>
+        ) : checkError ? (
+          <div className="mt-4 rounded-[16px] border border-amber-500/20 bg-amber-500/[0.07] p-4">
+            <div className="flex gap-3">
+              <LockKeyhole
+                size={17}
+                className="mt-0.5 shrink-0 text-amber-300"
+              />
+              <div>
+                <p className="text-sm font-semibold text-amber-200">
+                  Deletion unavailable
+                </p>
+                <p className="mt-1 text-xs leading-5 text-amber-100/60">
+                  {checkError} The category will not be deleted unless the CMS can verify that removal is safe.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : references.length > 0 ? (
+          <div className="mt-4">
+            <div className="rounded-[16px] border border-red-500/20 bg-red-500/[0.07] p-4">
+              <div className="flex gap-3">
+                <AlertTriangle
+                  size={17}
+                  className="mt-0.5 shrink-0 text-red-300"
+                />
+                <div>
+                  <p className="text-sm font-semibold text-red-200">
+                    This category cannot be deleted
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-red-100/55">
+                    It is assigned to {references.length}{' '}
+                    {references.length === 1
+                      ? 'article'
+                      : 'articles'}. Reassign those articles to another category first.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 max-h-52 space-y-2 overflow-y-auto">
+              {references.map(
+                (reference) => (
+                  <a
+                    key={reference.id}
+                    href={`/admin/posts/${reference.id}/edit`}
+                    className="
+                      block
+                      rounded-[14px]
+                      border
+                      border-white/[0.07]
+                      bg-white/[0.035]
+                      px-4
+                      py-3
+                      transition
+                      hover:bg-white/[0.06]
+                    "
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="min-w-0 truncate text-xs font-semibold text-white/70">
+                        {reference.title}
+                      </p>
+
+                      <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-white/35">
+                        {reference.status}
+                      </span>
+                    </div>
+                  </a>
+                ),
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-[16px] border border-emerald-500/15 bg-emerald-500/[0.05] p-4">
+            <p className="text-sm font-semibold text-emerald-200">
+              Safe to delete
+            </p>
+            <p className="mt-1 text-xs leading-5 text-emerald-100/50">
+              No articles currently use “{category.name}”. Deleting it will permanently remove the category.
+            </p>
+          </div>
+        )}
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={onCancel}
+            className="
+              rounded-full
+              border
+              border-white/[0.10]
+              px-4
+              py-2.5
+              text-sm
+              font-medium
+              text-white/70
+              transition
+              hover:bg-white/[0.06]
+              hover:text-white
+              disabled:opacity-40
+            "
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            disabled={
+              deleting ||
+              checking ||
+              blocked
+            }
+            onClick={onConfirm}
+            className="
+              rounded-full
+              bg-red-500
+              px-4
+              py-2.5
+              text-sm
+              font-semibold
+              text-white
+              transition
+              hover:bg-red-400
+              disabled:cursor-not-allowed
+              disabled:opacity-35
+            "
+          >
+            {checking
+              ? 'Checking...'
+              : references.length > 0
+                ? 'In use'
+                : checkError
+                  ? 'Unavailable'
+                  : deleting
+                    ? 'Deleting...'
+                    : 'Delete Category'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
