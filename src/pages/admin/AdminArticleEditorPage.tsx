@@ -3,6 +3,7 @@ import {
   Check,
   ExternalLink,
   Eye,
+  EyeOff,
   FileText,
   Globe2,
   GripVertical,
@@ -34,6 +35,7 @@ import {
 
 import { AdminArticlePreview } from '../../components/admin/AdminArticlePreview'
 import { PublishReviewDialog } from '../../components/admin/PublishReviewDialog'
+import { PublicationStateDialog } from '../../components/admin/PublicationStateDialog'
 import { AdminLayout } from '../../components/admin/AdminLayout'
 import { UnsavedChangesDialog } from '../../components/admin/UnsavedChangesDialog'
 import { useAuth } from '../../context/AuthContext'
@@ -223,6 +225,12 @@ export function AdminArticleEditorPage() {
   const [
     previewOpen,
     setPreviewOpen,
+  ] =
+    useState(false)
+
+  const [
+    unpublishDialogOpen,
+    setUnpublishDialogOpen,
   ] =
     useState(false)
 
@@ -1136,12 +1144,14 @@ export function AdminArticleEditorPage() {
 
   async function saveArticle(
     requestedStatus: PostStatus,
+    allowPublishedStatusChange = false,
   ) {
     const targetStatus =
       currentStatus ===
         'published' &&
       requestedStatus ===
-        'draft'
+        'draft' &&
+      !allowPublishedStatusChange
         ? 'published'
         : requestedStatus
 
@@ -1222,8 +1232,12 @@ export function AdminArticleEditorPage() {
           }
         } else {
           toast.success(
-            'Draft saved',
-            'Your unfinished article has been saved successfully.',
+            wasPublished
+              ? 'Article unpublished'
+              : 'Draft saved',
+            wasPublished
+              ? 'The article is no longer visible on the public website and is now a draft.'
+              : 'Your unfinished article has been saved successfully.',
           )
         }
 
@@ -1404,6 +1418,35 @@ export function AdminArticleEditorPage() {
         sources={
           form.sources
         }
+      />
+
+      <PublicationStateDialog
+        open={
+          unpublishDialogOpen
+        }
+        title={
+          form.title ||
+          'Untitled article'
+        }
+        targetStatus="draft"
+        mutating={
+          saving
+        }
+        onCancel={() =>
+          setUnpublishDialogOpen(
+            false,
+          )
+        }
+        onConfirm={() => {
+          setUnpublishDialogOpen(
+            false,
+          )
+
+          void saveArticle(
+            'draft',
+            true,
+          )
+        }}
       />
 
       <PublishReviewDialog
@@ -1656,6 +1699,44 @@ export function AdminArticleEditorPage() {
                 ? 'Save Changes'
                 : 'Save Draft'}
           </button>
+
+          {currentStatus ===
+            'published' && (
+            <button
+              type="button"
+              disabled={
+                saving ||
+                uploadingImage
+              }
+              onClick={() =>
+                setUnpublishDialogOpen(
+                  true,
+                )
+              }
+              className="
+                inline-flex
+                h-11
+                items-center
+                gap-2
+                rounded-full
+                border
+                border-amber-300/20
+                bg-amber-300/[0.05]
+                px-5
+                text-sm
+                font-semibold
+                text-amber-200
+                transition
+                hover:bg-amber-300/[0.10]
+                disabled:opacity-40
+              "
+            >
+              <EyeOff
+                size={15}
+              />
+              Unpublish
+            </button>
+          )}
 
           <button
             type="button"

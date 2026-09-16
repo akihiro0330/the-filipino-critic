@@ -20,6 +20,7 @@ import {
 import { Link } from 'react-router-dom'
 
 import { AdminLayout } from '../../components/admin/AdminLayout'
+import { PublicationStateDialog } from '../../components/admin/PublicationStateDialog'
 import { useToast } from '../../context/ToastContext'
 import { useAdminPosts } from '../../hooks/useAdminPosts'
 
@@ -32,6 +33,11 @@ type StatusFilter = 'all' | PostStatus
 
 interface PendingPublish {
   post: AdminPostRecord
+}
+
+interface PendingVisibilityChange {
+  post: AdminPostRecord
+  targetStatus: Extract<PostStatus, 'draft' | 'archived'>
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -59,6 +65,8 @@ export function AdminPostsPage() {
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
   const [deletingPost, setDeletingPost] = useState<AdminPostRecord | null>(null)
   const [pendingPublish, setPendingPublish] = useState<PendingPublish | null>(null)
+  const [pendingVisibilityChange, setPendingVisibilityChange] =
+    useState<PendingVisibilityChange | null>(null)
 
   const filteredPosts = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase()
@@ -90,7 +98,22 @@ export function AdminPostsPage() {
     setActiveMenu(null)
 
     if (nextStatus === 'published') {
-      setPendingPublish({ post })
+      // Publishing must go through the article editor so the F1
+      // pre-publish validation and review cannot be bypassed.
+      return
+    }
+
+    if (
+      post.status === 'published' &&
+      (
+        nextStatus === 'draft' ||
+        nextStatus === 'archived'
+      )
+    ) {
+      setPendingVisibilityChange({
+        post,
+        targetStatus: nextStatus,
+      })
       return
     }
 
@@ -114,6 +137,51 @@ export function AdminPostsPage() {
         getErrorMessage(
           caughtError,
           'The article status could not be changed.',
+        ),
+      )
+    }
+  }
+
+  async function handleVisibilityChangeConfirm() {
+    if (!pendingVisibilityChange) {
+      return
+    }
+
+    const {
+      post,
+      targetStatus,
+    } = pendingVisibilityChange
+
+    try {
+      await changeStatus(
+        post.id,
+        targetStatus,
+      )
+
+      setPendingVisibilityChange(
+        null,
+      )
+
+      if (
+        targetStatus ===
+        'draft'
+      ) {
+        toast.success(
+          'Article unpublished',
+          `“${post.title}” is no longer visible publicly and is now a draft.`,
+        )
+      } else {
+        toast.success(
+          'Article archived',
+          `“${post.title}” is no longer visible publicly and has been archived.`,
+        )
+      }
+    } catch (caughtError) {
+      toast.error(
+        'Status update failed',
+        getErrorMessage(
+          caughtError,
+          'The published article could not be updated.',
         ),
       )
     }
@@ -450,6 +518,29 @@ export function AdminPostsPage() {
         )}
       </section>
 
+      {pendingVisibilityChange && (
+        <PublicationStateDialog
+          open
+          title={
+            pendingVisibilityChange.post.title
+          }
+          targetStatus={
+            pendingVisibilityChange.targetStatus
+          }
+          mutating={
+            mutating
+          }
+          onCancel={() =>
+            setPendingVisibilityChange(
+              null,
+            )
+          }
+          onConfirm={() =>
+            void handleVisibilityChangeConfirm()
+          }
+        />
+      )}
+
       {pendingPublish && (
         <PublishPostDialog
           post={pendingPublish.post}
@@ -640,9 +731,8 @@ function PostRow({
             </Link>
 
             {post.status !== 'published' && (
-              <button
-                type="button"
-                onClick={() => void onStatus(post, 'published')}
+              <Link
+                to={`/admin/posts/${post.id}/edit`}
                 className="
                   flex
                   w-full
@@ -653,14 +743,14 @@ function PostRow({
                   py-2.5
                   text-left
                   text-sm
-                  text-emerald-300
+                  !text-emerald-300
                   transition
                   hover:bg-emerald-400/[0.08]
                 "
               >
                 <CheckCircle2 size={15} />
-                Publish
-              </button>
+                Review &amp; Publish
+              </Link>
             )}
 
             {post.status !== 'draft' && (
