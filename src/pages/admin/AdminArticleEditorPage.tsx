@@ -1,6 +1,8 @@
 import {
   ArrowLeft,
+  Check,
   ExternalLink,
+  Eye,
   FileText,
   Globe2,
   GripVertical,
@@ -20,6 +22,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ReactNode,
 } from 'react'
 
 import {
@@ -28,9 +31,13 @@ import {
   useParams,
 } from 'react-router-dom'
 
+import { AdminArticlePreview } from '../../components/admin/AdminArticlePreview'
 import { AdminLayout } from '../../components/admin/AdminLayout'
+import { UnsavedChangesDialog } from '../../components/admin/UnsavedChangesDialog'
 import { useAuth } from '../../context/AuthContext'
+import { useToast } from '../../context/ToastContext'
 import { useAdminArticleEditor } from '../../hooks/useAdminArticleEditor'
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges'
 
 import type {
   AdminEditorSource,
@@ -56,52 +63,115 @@ interface EditorFormState {
   sources: AdminEditorSource[]
 }
 
-const initialState: EditorFormState = {
-  title: '',
-  slug: '',
-  excerpt: '',
-  categoryId: '',
-  featuredImage: '',
-  imageAlt: '',
-  readingTime: '',
-  isFeatured: false,
-  isTrending: false,
-  trendingRank: '',
-  metaTitle: '',
-  metaDescription: '',
-  sections: [
-    {
-      heading: '',
-      paragraphs: [''],
-      quote: '',
-    },
-  ],
-  sources: [],
+function createInitialState(): EditorFormState {
+  return {
+    title: '',
+    slug: '',
+    excerpt: '',
+    categoryId: '',
+    featuredImage: '',
+    imageAlt: '',
+    readingTime: '',
+    isFeatured: false,
+    isTrending: false,
+    trendingRank: '',
+    metaTitle: '',
+    metaDescription: '',
+    sections: [
+      {
+        heading: '',
+        paragraphs: [''],
+        quote: '',
+      },
+    ],
+    sources: [],
+  }
 }
 
-function slugify(
-  value: string,
-) {
+function slugify(value: string) {
   return value
     .toLowerCase()
     .trim()
-    .replace(
-      /[^a-z0-9]+/g,
-      '-',
-    )
-    .replace(
-      /^-+|-+$/g,
-      '',
-    )
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function normalizeFormForSnapshot(
+  form: EditorFormState,
+) {
+  return {
+    title: form.title,
+    slug: form.slug,
+    excerpt: form.excerpt,
+    categoryId: form.categoryId,
+    featuredImage: form.featuredImage,
+    imageAlt: form.imageAlt,
+    readingTime: form.readingTime,
+    isFeatured: form.isFeatured,
+    isTrending: form.isTrending,
+    trendingRank: form.trendingRank,
+    metaTitle: form.metaTitle,
+    metaDescription: form.metaDescription,
+
+    sections: form.sections.map(
+      (section) => ({
+        heading:
+          section.heading ?? '',
+
+        paragraphs:
+          section.paragraphs ?? [],
+
+        quote:
+          section.quote ?? '',
+      }),
+    ),
+
+    sources: form.sources.map(
+      (source) => ({
+        id:
+          source.id ??
+          null,
+
+        label:
+          source.label,
+
+        url:
+          source.url,
+      }),
+    ),
+  }
+}
+
+function snapshotForm(
+  form: EditorFormState,
+) {
+  return JSON.stringify(
+    normalizeFormForSnapshot(
+      form,
+    ),
+  )
+}
+
+function getErrorMessage(
+  error: unknown,
+  fallback: string,
+) {
+  if (
+    error instanceof Error &&
+    error.message
+  ) {
+    return error.message
+  }
+
+  return fallback
 }
 
 export function AdminArticleEditorPage() {
   const {
     postId,
-  } =
-    useParams<{
-      postId?: string
-    }>()
+  } = useParams<{
+    postId?: string
+  }>()
 
   const isEditing =
     Boolean(postId)
@@ -113,54 +183,77 @@ export function AdminArticleEditorPage() {
     user,
   } = useAuth()
 
+  const toast =
+    useToast()
+
   const {
     article,
     categories,
     loading,
     saving,
     uploadingImage,
-    error,
     create,
     update,
     uploadImage,
-  } =
-    useAdminArticleEditor(
-      postId,
-    )
+  } = useAdminArticleEditor(
+    postId,
+  )
 
   const [
     form,
     setForm,
   ] =
     useState<EditorFormState>(
-      initialState,
+      createInitialState,
     )
 
   const [
     slugEdited,
     setSlugEdited,
-  ] = useState(false)
+  ] =
+    useState(false)
 
   const [
-    localError,
-    setLocalError,
-  ] = useState<
-    string | null
-  >(null)
+    previewOpen,
+    setPreviewOpen,
+  ] =
+    useState(false)
 
   const [
-    savedMessage,
-    setSavedMessage,
-  ] = useState<
-    string | null
-  >(null)
+    savedSnapshot,
+    setSavedSnapshot,
+  ] =
+    useState<string | null>(
+      null,
+    )
 
   useEffect(() => {
+    if (!postId) {
+      const freshForm =
+        createInitialState()
+
+      setForm(
+        freshForm,
+      )
+
+      setSlugEdited(
+        false,
+      )
+
+      setSavedSnapshot(
+        snapshotForm(
+          freshForm,
+        ),
+      )
+
+      return
+    }
+
     if (!article) {
       return
     }
 
-    setForm({
+    const loadedForm: EditorFormState = {
       title:
         article.title,
 
@@ -183,7 +276,9 @@ export function AdminArticleEditorPage() {
         '',
 
       readingTime:
-        article.reading_time_minutes?.toString() ??
+        article
+          .reading_time_minutes
+          ?.toString() ??
         '',
 
       isFeatured:
@@ -193,7 +288,9 @@ export function AdminArticleEditorPage() {
         article.is_trending,
 
       trendingRank:
-        article.trending_rank?.toString() ??
+        article
+          .trending_rank
+          ?.toString() ??
         '',
 
       metaTitle:
@@ -210,21 +307,60 @@ export function AdminArticleEditorPage() {
           ? article.content
           : [
               {
-                heading:
+                heading: '',
+                paragraphs: [
                   '',
-                paragraphs:
-                  [''],
-                quote:
-                  '',
+                ],
+                quote: '',
               },
             ],
 
       sources:
         article.sources,
-    })
+    }
 
-    setSlugEdited(true)
-  }, [article])
+    setForm(
+      loadedForm,
+    )
+
+    setSlugEdited(
+      true,
+    )
+
+    setSavedSnapshot(
+      snapshotForm(
+        loadedForm,
+      ),
+    )
+  }, [
+    article,
+    postId,
+  ])
+
+  const currentSnapshot =
+    useMemo(
+      () =>
+        snapshotForm(
+          form,
+        ),
+      [form],
+    )
+
+  const isDirty =
+    savedSnapshot !==
+      null &&
+    currentSnapshot !==
+      savedSnapshot
+
+  const {
+    isBlocked,
+    proceed,
+    reset,
+    allowNextNavigation,
+  } = useUnsavedChanges(
+    isDirty &&
+      !saving,
+  )
 
   const wordCount =
     useMemo(() => {
@@ -234,8 +370,12 @@ export function AdminArticleEditorPage() {
             (section) => [
               section.heading ??
                 '',
-              ...(section.paragraphs ??
-                []),
+
+              ...(
+                section.paragraphs ??
+                []
+              ),
+
               section.quote ??
                 '',
             ],
@@ -251,28 +391,55 @@ export function AdminArticleEditorPage() {
         .split(/\s+/)
         .filter(Boolean)
         .length
-    }, [form.sections])
+    }, [
+      form.sections,
+    ])
 
   const estimatedReadingTime =
     Math.max(
       1,
       Math.ceil(
-        wordCount / 220,
+        wordCount /
+          220,
       ),
     )
+
+  const previewReadingTime =
+    form.readingTime
+      ? Math.max(
+          1,
+          Number(
+            form.readingTime,
+          ) || 1,
+        )
+      : estimatedReadingTime
+
+  const previewCategoryName =
+    useMemo(() => {
+      return (
+        categories.find(
+          (category) =>
+            category.id ===
+            form.categoryId,
+        )?.name ??
+        'Uncategorized'
+      )
+    }, [
+      categories,
+      form.categoryId,
+    ])
 
   function updateField<
     K extends keyof EditorFormState,
   >(
     key: K,
-    value: EditorFormState[K],
+    value:
+      EditorFormState[K],
   ) {
     setForm(
       (current) => ({
         ...current,
-
-        [key]:
-          value,
+        [key]: value,
       }),
     )
   }
@@ -299,7 +466,8 @@ export function AdminArticleEditorPage() {
 
   function updateSection(
     index: number,
-    updates: Partial<PostContentSection>,
+    updates:
+      Partial<PostContentSection>,
   ) {
     setForm(
       (current) => ({
@@ -332,15 +500,11 @@ export function AdminArticleEditorPage() {
           ...current.sections,
 
           {
-            heading:
-              '',
-
+            heading: '',
             paragraphs: [
               '',
             ],
-
-            quote:
-              '',
+            quote: '',
           },
         ],
       }),
@@ -378,8 +542,10 @@ export function AdminArticleEditorPage() {
       ]
 
     const paragraphs = [
-      ...(section.paragraphs ??
-        []),
+      ...(
+        section.paragraphs ??
+        []
+      ),
     ]
 
     paragraphs[
@@ -406,9 +572,10 @@ export function AdminArticleEditorPage() {
       sectionIndex,
       {
         paragraphs: [
-          ...(section.paragraphs ??
-            []),
-
+          ...(
+            section.paragraphs ??
+            []
+          ),
           '',
         ],
       },
@@ -520,15 +687,13 @@ export function AdminArticleEditorPage() {
     file: File,
   ) {
     if (!user) {
-      setLocalError(
-        'You must be signed in before uploading images.',
+      toast.error(
+        'Upload failed',
+        'You must be signed in before uploading an image.',
       )
 
       return
     }
-
-    setLocalError(null)
-    setSavedMessage(null)
 
     try {
       const uploaded =
@@ -563,28 +728,47 @@ export function AdminArticleEditorPage() {
         )
       }
 
-      setSavedMessage(
-        'Image uploaded successfully. Save the article to keep this image attached to the post.',
+      toast.success(
+        'Image uploaded',
+        'The featured image is ready. Save the article to attach it permanently.',
       )
-    } catch {
-      // Error is surfaced by the hook.
+    } catch (
+      caughtError
+    ) {
+      toast.error(
+        'Image upload failed',
+        getErrorMessage(
+          caughtError,
+          'The image could not be uploaded.',
+        ),
+      )
     }
   }
 
-  function validate(): string | null {
-    if (!form.title.trim()) {
+  function validate():
+    | string
+    | null {
+    if (
+      !form.title.trim()
+    ) {
       return 'Article title is required.'
     }
 
-    if (!form.slug.trim()) {
+    if (
+      !form.slug.trim()
+    ) {
       return 'Article slug is required.'
     }
 
-    if (!form.excerpt.trim()) {
+    if (
+      !form.excerpt.trim()
+    ) {
       return 'Article excerpt is required.'
     }
 
-    if (!form.categoryId) {
+    if (
+      !form.categoryId
+    ) {
       return 'Please select a category.'
     }
 
@@ -647,7 +831,8 @@ export function AdminArticleEditorPage() {
         form.sections.map(
           (section) => ({
             heading:
-              section.heading?.trim() ||
+              section.heading
+                ?.trim() ||
               undefined,
 
             paragraphs:
@@ -656,7 +841,9 @@ export function AdminArticleEditorPage() {
                 []
               )
                 .map(
-                  (paragraph) =>
+                  (
+                    paragraph,
+                  ) =>
                     paragraph.trim(),
                 )
                 .filter(
@@ -664,7 +851,8 @@ export function AdminArticleEditorPage() {
                 ),
 
             quote:
-              section.quote?.trim() ||
+              section.quote
+                ?.trim() ||
               undefined,
           }),
         ),
@@ -714,26 +902,19 @@ export function AdminArticleEditorPage() {
   async function saveArticle(
     status: PostStatus,
   ) {
-    setSavedMessage(
-      null,
-    )
-
     const validationError =
       validate()
 
     if (
       validationError
     ) {
-      setLocalError(
+      toast.warning(
+        'Article needs attention',
         validationError,
       )
 
       return
     }
-
-    setLocalError(
-      null,
-    )
 
     try {
       const input =
@@ -741,19 +922,37 @@ export function AdminArticleEditorPage() {
           status,
         )
 
-      if (
-        isEditing
-      ) {
+      if (isEditing) {
         await update(
           input,
         )
 
-        setSavedMessage(
+        setSavedSnapshot(
+          snapshotForm(
+            form,
+          ),
+        )
+
+        if (
           status ===
           'published'
-            ? 'Article published successfully.'
-            : 'Changes saved successfully.',
-        )
+        ) {
+          toast.success(
+            article?.status ===
+              'published'
+              ? 'Published article updated'
+              : 'Article published',
+            article?.status ===
+              'published'
+              ? 'Your latest changes are now live.'
+              : 'The article is now visible on the public website.',
+          )
+        } else {
+          toast.success(
+            'Draft saved',
+            'Your article changes have been saved successfully.',
+          )
+        }
 
         return
       }
@@ -763,21 +962,56 @@ export function AdminArticleEditorPage() {
           input,
         )
 
+      setSavedSnapshot(
+        snapshotForm(
+          form,
+        ),
+      )
+
+      if (
+        status ===
+        'published'
+      ) {
+        toast.success(
+          'Article published',
+          'The article is now live on The Filipino Critic.',
+        )
+      } else {
+        toast.success(
+          'Draft created',
+          'Your new article has been saved as a draft.',
+        )
+      }
+
+      allowNextNavigation()
+
       navigate(
         `/admin/posts/${newPostId}/edit`,
         {
-          replace:
-            true,
+          replace: true,
         },
       )
-    } catch {
-      // Error is surfaced by the hook.
+    } catch (
+      caughtError
+    ) {
+      toast.error(
+        status ===
+          'published'
+          ? 'Publishing failed'
+          : 'Save failed',
+
+        getErrorMessage(
+          caughtError,
+          status ===
+            'published'
+            ? 'The article could not be published.'
+            : 'The article could not be saved.',
+        ),
+      )
     }
   }
 
-  if (
-    loading
-  ) {
+  if (loading) {
     return (
       <AdminLayout>
         <EditorLoading />
@@ -799,11 +1033,7 @@ export function AdminArticleEditorPage() {
             justify-center
           "
         >
-          <div
-            className="
-              text-center
-            "
-          >
+          <div className="text-center">
             <FileText
               size={30}
               className="
@@ -840,6 +1070,53 @@ export function AdminArticleEditorPage() {
 
   return (
     <AdminLayout>
+      <UnsavedChangesDialog
+        open={
+          isBlocked
+        }
+        onStay={
+          reset
+        }
+        onLeave={
+          proceed
+        }
+      />
+
+      <AdminArticlePreview
+        open={
+          previewOpen
+        }
+        onClose={() =>
+          setPreviewOpen(
+            false,
+          )
+        }
+        title={
+          form.title
+        }
+        excerpt={
+          form.excerpt
+        }
+        categoryName={
+          previewCategoryName
+        }
+        featuredImage={
+          form.featuredImage
+        }
+        imageAlt={
+          form.imageAlt
+        }
+        readingTimeMinutes={
+          previewReadingTime
+        }
+        sections={
+          form.sections
+        }
+        sources={
+          form.sources
+        }
+      />
+
       <div
         className="
           flex
@@ -886,19 +1163,37 @@ export function AdminArticleEditorPage() {
               : 'New Article'}
           </p>
 
-          <h1
+          <div
             className="
               mt-2
-              text-3xl
-              font-semibold
-              tracking-tight
-              sm:text-4xl
+              flex
+              flex-wrap
+              items-center
+              gap-3
             "
           >
-            {isEditing
-              ? 'Edit story'
-              : 'Create story'}
-          </h1>
+            <h1
+              className="
+                text-3xl
+                font-semibold
+                tracking-tight
+                sm:text-4xl
+              "
+            >
+              {isEditing
+                ? 'Edit story'
+                : 'Create story'}
+            </h1>
+
+            <EditorSaveStatus
+              dirty={
+                isDirty
+              }
+              saving={
+                saving
+              }
+            />
+          </div>
         </div>
 
         <div
@@ -908,6 +1203,37 @@ export function AdminArticleEditorPage() {
             gap-2
           "
         >
+          <button
+            type="button"
+            onClick={() =>
+              setPreviewOpen(
+                true,
+              )
+            }
+            className="
+              inline-flex
+              h-11
+              items-center
+              gap-2
+              rounded-full
+              border
+              border-white/[0.10]
+              bg-white/[0.04]
+              px-5
+              text-sm
+              font-semibold
+              text-white/70
+              transition
+              hover:bg-white/[0.08]
+              hover:text-white
+            "
+          >
+            <Eye
+              size={15}
+            />
+            Preview
+          </button>
+
           <button
             type="button"
             disabled={
@@ -988,44 +1314,6 @@ export function AdminArticleEditorPage() {
         </div>
       </div>
 
-      {(error ||
-        localError) && (
-        <div
-          className="
-            mt-6
-            rounded-[18px]
-            border
-            border-red-500/20
-            bg-red-500/[0.07]
-            px-4
-            py-3
-            text-sm
-            text-red-200
-          "
-        >
-          {localError ??
-            error}
-        </div>
-      )}
-
-      {savedMessage && (
-        <div
-          className="
-            mt-6
-            rounded-[18px]
-            border
-            border-emerald-500/20
-            bg-emerald-500/[0.06]
-            px-4
-            py-3
-            text-sm
-            text-emerald-200
-          "
-        >
-          {savedMessage}
-        </div>
-      )}
-
       <div
         className="
           mt-8
@@ -1034,11 +1322,7 @@ export function AdminArticleEditorPage() {
           xl:grid-cols-[minmax(0,1fr)_360px]
         "
       >
-        <div
-          className="
-            space-y-6
-          "
-        >
+        <div className="space-y-6">
           <EditorCard
             title="Article Details"
             description="Primary information displayed across the public website."
@@ -1055,7 +1339,9 @@ export function AdminArticleEditorPage() {
                   event,
                 ) =>
                   handleTitleChange(
-                    event.target.value,
+                    event
+                      .target
+                      .value,
                   )
                 }
                 placeholder="Enter article title..."
@@ -1069,11 +1355,7 @@ export function AdminArticleEditorPage() {
               label="Slug"
               required
             >
-              <div
-                className="
-                  relative
-                "
-              >
+              <div className="relative">
                 <Link2
                   size={15}
                   className="
@@ -1100,7 +1382,9 @@ export function AdminArticleEditorPage() {
                     updateField(
                       'slug',
                       slugify(
-                        event.target.value,
+                        event
+                          .target
+                          .value,
                       ),
                     )
                   }}
@@ -1126,7 +1410,9 @@ export function AdminArticleEditorPage() {
                 ) =>
                   updateField(
                     'excerpt',
-                    event.target.value,
+                    event
+                      .target
+                      .value,
                   )
                 }
                 rows={4}
@@ -1138,7 +1424,8 @@ export function AdminArticleEditorPage() {
 
               <CharacterCount
                 current={
-                  form.excerpt.length
+                  form.excerpt
+                    .length
                 }
                 recommended={
                   180
@@ -1151,11 +1438,7 @@ export function AdminArticleEditorPage() {
             title="Article Content"
             description={`${wordCount} words · approximately ${estimatedReadingTime} min read`}
           >
-            <div
-              className="
-                space-y-5
-              "
-            >
+            <div className="space-y-5">
               {form.sections.map(
                 (
                   section,
@@ -1193,7 +1476,9 @@ export function AdminArticleEditorPage() {
                         "
                       >
                         <GripVertical
-                          size={15}
+                          size={
+                            15
+                          }
                         />
 
                         Section{' '}
@@ -1201,7 +1486,9 @@ export function AdminArticleEditorPage() {
                           1}
                       </div>
 
-                      {form.sections.length >
+                      {form
+                        .sections
+                        .length >
                         1 && (
                         <button
                           type="button"
@@ -1224,7 +1511,9 @@ export function AdminArticleEditorPage() {
                           "
                         >
                           <Trash2
-                            size={14}
+                            size={
+                              14
+                            }
                           />
                         </button>
                       )}
@@ -1242,7 +1531,9 @@ export function AdminArticleEditorPage() {
                           sectionIndex,
                           {
                             heading:
-                              event.target.value,
+                              event
+                                .target
+                                .value,
                           },
                         )
                       }
@@ -1253,12 +1544,7 @@ export function AdminArticleEditorPage() {
                       `}
                     />
 
-                    <div
-                      className="
-                        mt-4
-                        space-y-3
-                      "
-                    >
+                    <div className="mt-4 space-y-3">
                       {(
                         section.paragraphs ??
                         ['']
@@ -1287,10 +1573,14 @@ export function AdminArticleEditorPage() {
                                 updateParagraph(
                                   sectionIndex,
                                   paragraphIndex,
-                                  event.target.value,
+                                  event
+                                    .target
+                                    .value,
                                 )
                               }
-                              rows={6}
+                              rows={
+                                6
+                              }
                               placeholder="Write paragraph..."
                               className={`
                                 ${textareaClass}
@@ -1322,7 +1612,9 @@ export function AdminArticleEditorPage() {
                               "
                             >
                               <Trash2
-                                size={14}
+                                size={
+                                  14
+                                }
                               />
                             </button>
                           </div>
@@ -1350,9 +1642,10 @@ export function AdminArticleEditorPage() {
                       "
                     >
                       <Plus
-                        size={13}
+                        size={
+                          13
+                        }
                       />
-
                       Add paragraph
                     </button>
 
@@ -1375,7 +1668,9 @@ export function AdminArticleEditorPage() {
                         "
                       >
                         <Quote
-                          size={14}
+                          size={
+                            14
+                          }
                         />
 
                         Optional pull quote
@@ -1393,7 +1688,9 @@ export function AdminArticleEditorPage() {
                             sectionIndex,
                             {
                               quote:
-                                event.target.value,
+                                event
+                                  .target
+                                  .value,
                             },
                           )
                         }
@@ -1439,7 +1736,6 @@ export function AdminArticleEditorPage() {
               <Plus
                 size={15}
               />
-
               Add Section
             </button>
           </EditorCard>
@@ -1448,7 +1744,8 @@ export function AdminArticleEditorPage() {
             title="Sources & References"
             description="Add external sources supporting the article."
           >
-            {form.sources.length ===
+            {form.sources
+              .length ===
             0 ? (
               <div
                 className="
@@ -1480,11 +1777,7 @@ export function AdminArticleEditorPage() {
                 </p>
               </div>
             ) : (
-              <div
-                className="
-                  space-y-3
-                "
-              >
+              <div className="space-y-3">
                 {form.sources.map(
                   (
                     source,
@@ -1515,7 +1808,9 @@ export function AdminArticleEditorPage() {
                           updateSource(
                             index,
                             'label',
-                            event.target.value,
+                            event
+                              .target
+                              .value,
                           )
                         }
                         placeholder="Source label"
@@ -1534,7 +1829,9 @@ export function AdminArticleEditorPage() {
                           updateSource(
                             index,
                             'url',
-                            event.target.value,
+                            event
+                              .target
+                              .value,
                           )
                         }
                         placeholder="https://..."
@@ -1564,7 +1861,9 @@ export function AdminArticleEditorPage() {
                         "
                       >
                         <Trash2
-                          size={14}
+                          size={
+                            14
+                          }
                         />
                       </button>
                     </div>
@@ -1591,7 +1890,6 @@ export function AdminArticleEditorPage() {
               <Plus
                 size={14}
               />
-
               Add source
             </button>
           </EditorCard>
@@ -1610,7 +1908,9 @@ export function AdminArticleEditorPage() {
                 ) =>
                   updateField(
                     'metaTitle',
-                    event.target.value,
+                    event
+                      .target
+                      .value,
                   )
                 }
                 placeholder="Defaults to article title"
@@ -1621,7 +1921,9 @@ export function AdminArticleEditorPage() {
 
               <CharacterCount
                 current={
-                  form.metaTitle.length
+                  form
+                    .metaTitle
+                    .length
                 }
                 recommended={
                   60
@@ -1639,7 +1941,9 @@ export function AdminArticleEditorPage() {
                 ) =>
                   updateField(
                     'metaDescription',
-                    event.target.value,
+                    event
+                      .target
+                      .value,
                   )
                 }
                 rows={3}
@@ -1651,7 +1955,9 @@ export function AdminArticleEditorPage() {
 
               <CharacterCount
                 current={
-                  form.metaDescription.length
+                  form
+                    .metaDescription
+                    .length
                 }
                 recommended={
                   160
@@ -1686,7 +1992,9 @@ export function AdminArticleEditorPage() {
                 ) =>
                   updateField(
                     'categoryId',
-                    event.target.value,
+                    event
+                      .target
+                      .value,
                   )
                 }
                 className={
@@ -1730,7 +2038,9 @@ export function AdminArticleEditorPage() {
                 ) =>
                   updateField(
                     'readingTime',
-                    event.target.value,
+                    event
+                      .target
+                      .value,
                   )
                 }
                 placeholder={`${estimatedReadingTime} min automatically`}
@@ -1785,7 +2095,9 @@ export function AdminArticleEditorPage() {
                   ) =>
                     updateField(
                       'trendingRank',
-                      event.target.value,
+                      event
+                        .target
+                        .value,
                     )
                   }
                   placeholder="1"
@@ -1801,128 +2113,132 @@ export function AdminArticleEditorPage() {
             title="Featured Image"
             description="Upload an image from your computer or use an external URL."
           >
-            <div>
-              <input
-                id="tfc-featured-image-upload"
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/avif"
-                disabled={
-                  uploadingImage
+            <input
+              id="tfc-featured-image-upload"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/avif"
+              disabled={
+                uploadingImage
+              }
+              onChange={(
+                event,
+              ) => {
+                const file =
+                  event
+                    .currentTarget
+                    .files?.[0]
+
+                if (file) {
+                  void handleImageUpload(
+                    file,
+                  )
                 }
-                onChange={(
-                  event,
-                ) => {
-                  const file =
-                    event.currentTarget.files?.[0]
 
-                  if (file) {
-                    void handleImageUpload(
-                      file,
-                    )
-                  }
+                event.currentTarget.value =
+                  ''
+              }}
+              className="sr-only"
+            />
 
-                  event.currentTarget.value =
-                    ''
-                }}
-                className="
-                  sr-only
-                "
-              />
+            <label
+              htmlFor="tfc-featured-image-upload"
+              className={`
+                flex
+                min-h-[120px]
+                cursor-pointer
+                flex-col
+                items-center
+                justify-center
+                rounded-[18px]
+                border
+                border-dashed
+                border-white/[0.14]
+                bg-black/10
+                px-5
+                py-6
+                text-center
+                transition
+                hover:border-[#AD2730]/55
+                hover:bg-[#AD2730]/[0.04]
 
-              <label
-                htmlFor="tfc-featured-image-upload"
-                className={`
-                  flex
-                  min-h-[120px]
-                  cursor-pointer
-                  flex-col
-                  items-center
-                  justify-center
-                  rounded-[18px]
-                  border
-                  border-dashed
-                  border-white/[0.14]
-                  bg-black/10
-                  px-5
-                  py-6
-                  text-center
-                  transition
-                  hover:border-[#AD2730]/55
-                  hover:bg-[#AD2730]/[0.04]
-                  ${
-                    uploadingImage
-                      ? 'pointer-events-none opacity-50'
-                      : ''
-                  }
-                `}
-              >
-                {uploadingImage ? (
-                  <>
-                    <LoaderCircle
-                      size={22}
-                      className="
-                        animate-spin
-                        text-[#d64a52]
-                      "
+                ${
+                  uploadingImage
+                    ? 'pointer-events-none opacity-50'
+                    : ''
+                }
+              `}
+            >
+              {uploadingImage ? (
+                <>
+                  <LoaderCircle
+                    size={
+                      22
+                    }
+                    className="
+                      animate-spin
+                      text-[#d64a52]
+                    "
+                  />
+
+                  <p
+                    className="
+                      mt-3
+                      text-sm
+                      font-semibold
+                      text-white/65
+                    "
+                  >
+                    Uploading image...
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div
+                    className="
+                      flex
+                      h-10
+                      w-10
+                      items-center
+                      justify-center
+                      rounded-full
+                      bg-white/[0.05]
+                      text-white/45
+                    "
+                  >
+                    <Upload
+                      size={
+                        17
+                      }
                     />
+                  </div>
 
-                    <p
-                      className="
-                        mt-3
-                        text-sm
-                        font-semibold
-                        text-white/65
-                      "
-                    >
-                      Uploading image...
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <div
-                      className="
-                        flex
-                        h-10
-                        w-10
-                        items-center
-                        justify-center
-                        rounded-full
-                        bg-white/[0.05]
-                        text-white/45
-                      "
-                    >
-                      <Upload
-                        size={17}
-                      />
-                    </div>
+                  <p
+                    className="
+                      mt-3
+                      text-sm
+                      font-semibold
+                      text-white/65
+                    "
+                  >
+                    Choose an image
+                  </p>
 
-                    <p
-                      className="
-                        mt-3
-                        text-sm
-                        font-semibold
-                        text-white/65
-                      "
-                    >
-                      Choose an image
-                    </p>
-
-                    <p
-                      className="
-                        mt-1
-                        text-[11px]
-                        leading-5
-                        text-white/30
-                      "
-                    >
-                      JPG, PNG, WebP or AVIF
-                      <br />
-                      Maximum 5 MB
-                    </p>
-                  </>
-                )}
-              </label>
-            </div>
+                  <p
+                    className="
+                      mt-1
+                      text-[11px]
+                      leading-5
+                      text-white/30
+                    "
+                  >
+                    JPG, PNG,
+                    WebP or AVIF
+                    <br />
+                    Maximum 5 MB
+                  </p>
+                </>
+              )}
+            </label>
 
             <div
               className="
@@ -1961,13 +2277,11 @@ export function AdminArticleEditorPage() {
             </div>
 
             <EditorLabel label="External Image URL">
-              <div
-                className="
-                  relative
-                "
-              >
+              <div className="relative">
                 <ImageIcon
-                  size={15}
+                  size={
+                    15
+                  }
                   className="
                     pointer-events-none
                     absolute
@@ -1987,7 +2301,9 @@ export function AdminArticleEditorPage() {
                   ) =>
                     updateField(
                       'featuredImage',
-                      event.target.value,
+                      event
+                        .target
+                        .value,
                     )
                   }
                   placeholder="https://..."
@@ -2009,7 +2325,9 @@ export function AdminArticleEditorPage() {
                 ) =>
                   updateField(
                     'imageAlt',
-                    event.target.value,
+                    event
+                      .target
+                      .value,
                   )
                 }
                 placeholder="Describe what appears in the image"
@@ -2029,11 +2347,7 @@ export function AdminArticleEditorPage() {
                   bg-black/20
                 "
               >
-                <div
-                  className="
-                    relative
-                  "
-                >
+                <div className="relative">
                   <img
                     src={
                       form.featuredImage
@@ -2062,6 +2376,11 @@ export function AdminArticleEditorPage() {
                         'imageAlt',
                         '',
                       )
+
+                      toast.info(
+                        'Featured image removed',
+                        'Save the article to apply this change.',
+                      )
                     }}
                     className="
                       absolute
@@ -2084,7 +2403,9 @@ export function AdminArticleEditorPage() {
                     "
                   >
                     <X
-                      size={15}
+                      size={
+                        15
+                      }
                     />
                   </button>
                 </div>
@@ -2099,11 +2420,7 @@ export function AdminArticleEditorPage() {
                     py-3
                   "
                 >
-                  <div
-                    className="
-                      min-w-0
-                    "
-                  >
+                  <div className="min-w-0">
                     <p
                       className="
                         text-xs
@@ -2151,7 +2468,9 @@ export function AdminArticleEditorPage() {
                     "
                   >
                     <ExternalLink
-                      size={14}
+                      size={
+                        14
+                      }
                     />
                   </a>
                 </div>
@@ -2164,6 +2483,98 @@ export function AdminArticleEditorPage() {
   )
 }
 
+function EditorSaveStatus({
+  dirty,
+  saving,
+}: {
+  dirty: boolean
+  saving: boolean
+}) {
+  if (saving) {
+    return (
+      <span
+        className="
+          inline-flex
+          items-center
+          gap-2
+          rounded-full
+          border
+          border-white/[0.08]
+          bg-white/[0.04]
+          px-3
+          py-1.5
+          text-[10px]
+          font-semibold
+          text-white/40
+        "
+      >
+        <LoaderCircle
+          size={11}
+          className="animate-spin"
+        />
+
+        Saving
+      </span>
+    )
+  }
+
+  if (dirty) {
+    return (
+      <span
+        className="
+          inline-flex
+          items-center
+          gap-2
+          rounded-full
+          border
+          border-amber-400/20
+          bg-amber-400/[0.07]
+          px-3
+          py-1.5
+          text-[10px]
+          font-semibold
+          text-amber-200
+        "
+      >
+        <span
+          className="
+            h-1.5
+            w-1.5
+            rounded-full
+            bg-amber-300
+          "
+        />
+
+        Unsaved changes
+      </span>
+    )
+  }
+
+  return (
+    <span
+      className="
+        inline-flex
+        items-center
+        gap-2
+        rounded-full
+        border
+        border-emerald-400/15
+        bg-emerald-400/[0.05]
+        px-3
+        py-1.5
+        text-[10px]
+        font-semibold
+        text-emerald-200/75
+      "
+    >
+      <Check
+        size={11}
+      />
+      Saved
+    </span>
+  )
+}
+
 function EditorCard({
   title,
   description,
@@ -2171,7 +2582,7 @@ function EditorCard({
 }: {
   title: string
   description?: string
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <section
@@ -2185,12 +2596,7 @@ function EditorCard({
         sm:p-6
       "
     >
-      <h2
-        className="
-          text-lg
-          font-semibold
-        "
-      >
+      <h2 className="text-lg font-semibold">
         {title}
       </h2>
 
@@ -2207,12 +2613,7 @@ function EditorCard({
         </p>
       )}
 
-      <div
-        className="
-          mt-5
-          space-y-5
-        "
-      >
+      <div className="mt-5 space-y-5">
         {children}
       </div>
     </section>
@@ -2226,7 +2627,7 @@ function EditorLabel({
 }: {
   label: string
   required?: boolean
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <label className="block">
@@ -2286,12 +2687,7 @@ function ToggleRow({
       "
     >
       <div>
-        <p
-          className="
-            text-sm
-            font-semibold
-          "
-        >
+        <p className="text-sm font-semibold">
           {label}
         </p>
 
@@ -2325,6 +2721,7 @@ function ToggleRow({
           shrink-0
           rounded-full
           transition
+
           ${
             checked
               ? 'bg-[#AD2730]'
@@ -2342,6 +2739,7 @@ function ToggleRow({
             bg-white
             shadow
             transition
+
             ${
               checked
                 ? 'left-6'
@@ -2378,11 +2776,7 @@ function CharacterCount({
 
 function EditorLoading() {
   return (
-    <div
-      className="
-        animate-pulse
-      "
-    >
+    <div className="animate-pulse">
       <div
         className="
           h-4

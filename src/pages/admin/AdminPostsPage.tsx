@@ -14,13 +14,13 @@ import {
 import {
   useMemo,
   useState,
+  type ReactNode,
 } from 'react'
 
-import {
-  Link,
-} from 'react-router-dom'
+import { Link } from 'react-router-dom'
 
 import { AdminLayout } from '../../components/admin/AdminLayout'
+import { useToast } from '../../context/ToastContext'
 import { useAdminPosts } from '../../hooks/useAdminPosts'
 
 import type {
@@ -28,9 +28,17 @@ import type {
   PostStatus,
 } from '../../types/database'
 
-type StatusFilter =
-  | 'all'
-  | PostStatus
+type StatusFilter = 'all' | PostStatus
+
+interface PendingPublish {
+  post: AdminPostRecord
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message
+    ? error.message
+    : fallback
+}
 
 export function AdminPostsPage() {
   const {
@@ -43,96 +51,98 @@ export function AdminPostsPage() {
     removePost,
   } = useAdminPosts()
 
-  const [search, setSearch] =
-    useState('')
+  const toast = useToast()
 
-  const [status, setStatus] =
-    useState<StatusFilter>(
-      'all',
-    )
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState<StatusFilter>('all')
+  const [category, setCategory] = useState('all')
+  const [activeMenu, setActiveMenu] = useState<string | null>(null)
+  const [deletingPost, setDeletingPost] = useState<AdminPostRecord | null>(null)
+  const [pendingPublish, setPendingPublish] = useState<PendingPublish | null>(null)
 
-  const [
-    category,
-    setCategory,
-  ] = useState('all')
+  const filteredPosts = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase()
 
-  const [
-    activeMenu,
-    setActiveMenu,
-  ] = useState<
-    string | null
-  >(null)
+    return posts.filter((post) => {
+      const postCategory = getPostCategory(post)
 
-  const [
-    deletingPost,
-    setDeletingPost,
-  ] =
-    useState<AdminPostRecord | null>(
-      null,
-    )
+      const matchesSearch =
+        !normalizedSearch ||
+        post.title.toLowerCase().includes(normalizedSearch) ||
+        post.slug.toLowerCase().includes(normalizedSearch)
 
-  const filteredPosts =
-    useMemo(() => {
-      const normalizedSearch =
-        search
-          .trim()
-          .toLowerCase()
+      const matchesStatus =
+        status === 'all' ||
+        post.status === status
 
-      return posts.filter(
-        (post) => {
-          const postCategory =
-            getPostCategory(
-              post,
-            )
+      const matchesCategory =
+        category === 'all' ||
+        postCategory?.slug === category
 
-          const matchesSearch =
-            !normalizedSearch ||
-            post.title
-              .toLowerCase()
-              .includes(
-                normalizedSearch,
-              ) ||
-            post.slug
-              .toLowerCase()
-              .includes(
-                normalizedSearch,
-              )
-
-          const matchesStatus =
-            status === 'all' ||
-            post.status ===
-              status
-
-          const matchesCategory =
-            category ===
-              'all' ||
-            postCategory?.slug ===
-              category
-
-          return (
-            matchesSearch &&
-            matchesStatus &&
-            matchesCategory
-          )
-        },
-      )
-    }, [
-      posts,
-      search,
-      status,
-      category,
-    ])
+      return matchesSearch && matchesStatus && matchesCategory
+    })
+  }, [posts, search, status, category])
 
   async function handleStatus(
-    postId: string,
+    post: AdminPostRecord,
     nextStatus: PostStatus,
   ) {
     setActiveMenu(null)
 
-    await changeStatus(
-      postId,
-      nextStatus,
-    )
+    if (nextStatus === 'published') {
+      setPendingPublish({ post })
+      return
+    }
+
+    try {
+      await changeStatus(post.id, nextStatus)
+
+      if (nextStatus === 'draft') {
+        toast.success(
+          'Moved to draft',
+          `“${post.title}” is no longer published.`,
+        )
+      } else if (nextStatus === 'archived') {
+        toast.success(
+          'Article archived',
+          `“${post.title}” has been moved to the archive.`,
+        )
+      }
+    } catch (caughtError) {
+      toast.error(
+        'Status update failed',
+        getErrorMessage(
+          caughtError,
+          'The article status could not be changed.',
+        ),
+      )
+    }
+  }
+
+  async function handlePublishConfirm() {
+    if (!pendingPublish) {
+      return
+    }
+
+    const post = pendingPublish.post
+
+    try {
+      await changeStatus(post.id, 'published')
+      setPendingPublish(null)
+
+      toast.success(
+        'Article published',
+        `“${post.title}” is now visible on the public website.`,
+      )
+    } catch (caughtError) {
+      toast.error(
+        'Publishing failed',
+        getErrorMessage(
+          caughtError,
+          'The article could not be published.',
+        ),
+      )
+    }
   }
 
   async function handleDelete() {
@@ -140,11 +150,25 @@ export function AdminPostsPage() {
       return
     }
 
-    await removePost(
-      deletingPost.id,
-    )
+    const post = deletingPost
 
-    setDeletingPost(null)
+    try {
+      await removePost(post.id)
+      setDeletingPost(null)
+
+      toast.success(
+        'Article deleted',
+        `“${post.title}” and its associated sources were deleted.`,
+      )
+    } catch (caughtError) {
+      toast.error(
+        'Delete failed',
+        getErrorMessage(
+          caughtError,
+          'The article could not be deleted.',
+        ),
+      )
+    }
   }
 
   return (
@@ -184,16 +208,8 @@ export function AdminPostsPage() {
             Posts
           </h1>
 
-          <p
-            className="
-              mt-3
-              text-sm
-              text-white/45
-            "
-          >
-            Manage all published,
-            draft and archived
-            stories.
+          <p className="mt-3 text-sm text-white/45">
+            Manage all published, draft and archived stories.
           </p>
         </div>
 
@@ -216,7 +232,6 @@ export function AdminPostsPage() {
           "
         >
           <Plus size={16} />
-
           New Article
         </Link>
       </div>
@@ -232,19 +247,8 @@ export function AdminPostsPage() {
           backdrop-blur-xl
         "
       >
-        <div
-          className="
-            grid
-            gap-3
-            lg:grid-cols-[1fr_190px_220px]
-          "
-        >
-          <label
-            className="
-              relative
-              block
-            "
-          >
+        <div className="grid gap-3 lg:grid-cols-[1fr_190px_220px]">
+          <label className="relative block">
             <Search
               size={16}
               className="
@@ -260,11 +264,7 @@ export function AdminPostsPage() {
             <input
               type="search"
               value={search}
-              onChange={(event) =>
-                setSearch(
-                  event.target.value,
-                )
-              }
+              onChange={(event) => setSearch(event.target.value)}
               placeholder="Search by title or slug..."
               className="
                 h-12
@@ -303,10 +303,7 @@ export function AdminPostsPage() {
             <select
               value={status}
               onChange={(event) =>
-                setStatus(
-                  event.target
-                    .value as StatusFilter,
-                )
+                setStatus(event.target.value as StatusFilter)
               }
               className="
                 h-12
@@ -324,31 +321,16 @@ export function AdminPostsPage() {
                 focus:border-[#AD2730]/60
               "
             >
-              <option value="all">
-                All statuses
-              </option>
-
-              <option value="published">
-                Published
-              </option>
-
-              <option value="draft">
-                Draft
-              </option>
-
-              <option value="archived">
-                Archived
-              </option>
+              <option value="all">All statuses</option>
+              <option value="published">Published</option>
+              <option value="draft">Draft</option>
+              <option value="archived">Archived</option>
             </select>
           </label>
 
           <select
             value={category}
-            onChange={(event) =>
-              setCategory(
-                event.target.value,
-              )
-            }
+            onChange={(event) => setCategory(event.target.value)}
             className="
               h-12
               w-full
@@ -364,22 +346,13 @@ export function AdminPostsPage() {
               focus:border-[#AD2730]/60
             "
           >
-            <option value="all">
-              All categories
-            </option>
+            <option value="all">All categories</option>
 
-            {categories.map(
-              (item) => (
-                <option
-                  key={item.id}
-                  value={
-                    item.slug
-                  }
-                >
-                  {item.name}
-                </option>
-              ),
-            )}
+            {categories.map((item) => (
+              <option key={item.id} value={item.slug}>
+                {item.name}
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -424,17 +397,10 @@ export function AdminPostsPage() {
         >
           <p className="text-sm font-semibold">
             {filteredPosts.length}{' '}
-            {filteredPosts.length === 1
-              ? 'post'
-              : 'posts'}
+            {filteredPosts.length === 1 ? 'post' : 'posts'}
           </p>
 
-          <p
-            className="
-              text-xs
-              text-white/35
-            "
-          >
+          <p className="text-xs text-white/35">
             {posts.length} total
           </p>
         </div>
@@ -469,45 +435,36 @@ export function AdminPostsPage() {
               <span />
             </div>
 
-            {filteredPosts.map(
-              (post) => (
-                <PostRow
-                  key={post.id}
-                  post={post}
-                  activeMenu={
-                    activeMenu
-                  }
-                  setActiveMenu={
-                    setActiveMenu
-                  }
-                  mutating={
-                    mutating
-                  }
-                  onStatus={
-                    handleStatus
-                  }
-                  onDelete={() =>
-                    setDeletingPost(
-                      post,
-                    )
-                  }
-                />
-              ),
-            )}
+            {filteredPosts.map((post) => (
+              <PostRow
+                key={post.id}
+                post={post}
+                activeMenu={activeMenu}
+                setActiveMenu={setActiveMenu}
+                mutating={mutating}
+                onStatus={handleStatus}
+                onDelete={() => setDeletingPost(post)}
+              />
+            ))}
           </>
         )}
       </section>
+
+      {pendingPublish && (
+        <PublishPostDialog
+          post={pendingPublish.post}
+          mutating={mutating}
+          onCancel={() => setPendingPublish(null)}
+          onConfirm={() => void handlePublishConfirm()}
+        />
+      )}
 
       {deletingPost && (
         <DeletePostDialog
           post={deletingPost}
           mutating={mutating}
-          onCancel={() =>
-            setDeletingPost(null)
-          }
-          onConfirm={() =>
-            void handleDelete()
-          }
+          onCancel={() => setDeletingPost(null)}
+          onConfirm={() => void handleDelete()}
         />
       )}
     </AdminLayout>
@@ -517,12 +474,10 @@ export function AdminPostsPage() {
 interface PostRowProps {
   post: AdminPostRecord
   activeMenu: string | null
-  setActiveMenu: (
-    value: string | null,
-  ) => void
+  setActiveMenu: (value: string | null) => void
   mutating: boolean
   onStatus: (
-    postId: string,
+    post: AdminPostRecord,
     status: PostStatus,
   ) => Promise<void>
   onDelete: () => void
@@ -536,11 +491,8 @@ function PostRow({
   onStatus,
   onDelete,
 }: PostRowProps) {
-  const category =
-    getPostCategory(post)
-
-  const menuOpen =
-    activeMenu === post.id
+  const category = getPostCategory(post)
+  const menuOpen = activeMenu === post.id
 
   return (
     <div
@@ -557,14 +509,7 @@ function PostRow({
         lg:items-center
       "
     >
-      <div
-        className="
-          flex
-          min-w-0
-          items-center
-          gap-4
-        "
-      >
+      <div className="flex min-w-0 items-center gap-4">
         <div
           className="
             h-14
@@ -577,15 +522,9 @@ function PostRow({
         >
           {post.featured_image ? (
             <img
-              src={
-                post.featured_image
-              }
+              src={post.featured_image}
               alt=""
-              className="
-                h-full
-                w-full
-                object-cover
-              "
+              className="h-full w-full object-cover"
             />
           ) : (
             <div
@@ -604,88 +543,43 @@ function PostRow({
         </div>
 
         <div className="min-w-0">
-          <p
-            className="
-              truncate
-              text-sm
-              font-semibold
-            "
-          >
+          <p className="truncate text-sm font-semibold">
             {post.title}
           </p>
 
-          <p
-            className="
-              mt-1
-              truncate
-              text-xs
-              text-white/30
-            "
-          >
+          <p className="mt-1 truncate text-xs text-white/30">
             /article/{post.slug}
           </p>
         </div>
       </div>
 
       <div>
-        <MobileLabel>
-          Category
-        </MobileLabel>
+        <MobileLabel>Category</MobileLabel>
 
-        <p
-          className="
-            text-sm
-            text-white/60
-          "
-        >
-          {category?.name ??
-            'Uncategorized'}
+        <p className="text-sm text-white/60">
+          {category?.name ?? 'Uncategorized'}
         </p>
       </div>
 
       <div>
-        <MobileLabel>
-          Status
-        </MobileLabel>
-
-        <PostStatusBadge
-          status={post.status}
-        />
+        <MobileLabel>Status</MobileLabel>
+        <PostStatusBadge status={post.status} />
       </div>
 
       <div>
-        <MobileLabel>
-          Updated
-        </MobileLabel>
+        <MobileLabel>Updated</MobileLabel>
 
-        <p
-          className="
-            text-sm
-            text-white/45
-          "
-        >
-          {formatDate(
-            post.updated_at,
-          )}
+        <p className="text-sm text-white/45">
+          {formatDate(post.updated_at)}
         </p>
       </div>
 
-      <div
-        className="
-          relative
-          flex
-          justify-end
-        "
-      >
+      <div className="relative flex justify-end">
         <button
           type="button"
           disabled={mutating}
           onClick={() =>
-            setActiveMenu(
-              menuOpen
-                ? null
-                : post.id,
-            )
+            setActiveMenu(menuOpen ? null : post.id)
           }
           className="
             flex
@@ -703,10 +597,9 @@ function PostRow({
             hover:text-white
             disabled:opacity-40
           "
+          aria-label={`Actions for ${post.title}`}
         >
-          <MoreHorizontal
-            size={16}
-          />
+          <MoreHorizontal size={16} />
         </button>
 
         {menuOpen && (
@@ -743,20 +636,13 @@ function PostRow({
               "
             >
               <Edit3 size={15} />
-
               Edit
             </Link>
 
-            {post.status !==
-              'published' && (
+            {post.status !== 'published' && (
               <button
                 type="button"
-                onClick={() =>
-                  void onStatus(
-                    post.id,
-                    'published',
-                  )
-                }
+                onClick={() => void onStatus(post, 'published')}
                 className="
                   flex
                   w-full
@@ -772,24 +658,15 @@ function PostRow({
                   hover:bg-emerald-400/[0.08]
                 "
               >
-                <CheckCircle2
-                  size={15}
-                />
-
+                <CheckCircle2 size={15} />
                 Publish
               </button>
             )}
 
-            {post.status !==
-              'draft' && (
+            {post.status !== 'draft' && (
               <button
                 type="button"
-                onClick={() =>
-                  void onStatus(
-                    post.id,
-                    'draft',
-                  )
-                }
+                onClick={() => void onStatus(post, 'draft')}
                 className="
                   flex
                   w-full
@@ -806,21 +683,14 @@ function PostRow({
                 "
               >
                 <Undo2 size={15} />
-
                 Move to draft
               </button>
             )}
 
-            {post.status !==
-              'archived' && (
+            {post.status !== 'archived' && (
               <button
                 type="button"
-                onClick={() =>
-                  void onStatus(
-                    post.id,
-                    'archived',
-                  )
-                }
+                onClick={() => void onStatus(post, 'archived')}
                 className="
                   flex
                   w-full
@@ -838,18 +708,11 @@ function PostRow({
                 "
               >
                 <Archive size={15} />
-
                 Archive
               </button>
             )}
 
-            <div
-              className="
-                my-1
-                h-px
-                bg-white/[0.08]
-              "
-            />
+            <div className="my-1 h-px bg-white/[0.08]" />
 
             <button
               type="button"
@@ -873,13 +736,45 @@ function PostRow({
               "
             >
               <Trash2 size={15} />
-
               Delete
             </button>
           </div>
         )}
       </div>
     </div>
+  )
+}
+
+function PublishPostDialog({
+  post,
+  mutating,
+  onCancel,
+  onConfirm,
+}: {
+  post: AdminPostRecord
+  mutating: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <ConfirmationDialog
+      icon={
+        <CheckCircle2 size={18} />
+      }
+      iconClass="bg-emerald-500/10 text-emerald-300"
+      title="Publish article?"
+      description={
+        <>
+          “{post.title}” will become visible on the public website.
+        </>
+      }
+      mutating={mutating}
+      cancelLabel="Cancel"
+      confirmLabel={mutating ? 'Publishing...' : 'Publish'}
+      confirmClass="bg-[#AD2730] hover:bg-[#c3313b]"
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
   )
 }
 
@@ -891,6 +786,50 @@ function DeletePostDialog({
 }: {
   post: AdminPostRecord
   mutating: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <ConfirmationDialog
+      icon={<Trash2 size={18} />}
+      iconClass="bg-red-500/10 text-red-300"
+      title="Delete article?"
+      description={
+        <>
+          “{post.title}” will be permanently deleted, including its
+          associated sources. This action cannot be undone.
+        </>
+      }
+      mutating={mutating}
+      cancelLabel="Cancel"
+      confirmLabel={mutating ? 'Deleting...' : 'Delete'}
+      confirmClass="bg-red-500 hover:bg-red-400"
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
+  )
+}
+
+function ConfirmationDialog({
+  icon,
+  iconClass,
+  title,
+  description,
+  mutating,
+  cancelLabel,
+  confirmLabel,
+  confirmClass,
+  onCancel,
+  onConfirm,
+}: {
+  icon: ReactNode
+  iconClass: string
+  title: string
+  description: ReactNode
+  mutating: boolean
+  cancelLabel: string
+  confirmLabel: string
+  confirmClass: string
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -907,8 +846,17 @@ function DeletePostDialog({
         p-4
         backdrop-blur-md
       "
+      role="presentation"
+      onMouseDown={(event) => {
+        if (!mutating && event.target === event.currentTarget) {
+          onCancel()
+        }
+      }}
     >
       <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="post-confirmation-title"
         className="
           w-full
           max-w-md
@@ -921,53 +869,31 @@ function DeletePostDialog({
         "
       >
         <div
-          className="
+          className={`
             flex
             h-11
             w-11
             items-center
             justify-center
             rounded-full
-            bg-red-500/10
-            text-red-300
-          "
+            ${iconClass}
+          `}
         >
-          <Trash2 size={18} />
+          {icon}
         </div>
 
         <h2
-          className="
-            mt-5
-            text-xl
-            font-semibold
-          "
+          id="post-confirmation-title"
+          className="mt-5 text-xl font-semibold"
         >
-          Delete article?
+          {title}
         </h2>
 
-        <p
-          className="
-            mt-3
-            text-sm
-            leading-6
-            text-white/45
-          "
-        >
-          “{post.title}” will be
-          permanently deleted,
-          including its associated
-          sources. This action cannot
-          be undone.
+        <p className="mt-3 text-sm leading-6 text-white/45">
+          {description}
         </p>
 
-        <div
-          className="
-            mt-6
-            flex
-            justify-end
-            gap-2
-          "
-        >
+        <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"
             disabled={mutating}
@@ -987,29 +913,26 @@ function DeletePostDialog({
               disabled:opacity-40
             "
           >
-            Cancel
+            {cancelLabel}
           </button>
 
           <button
             type="button"
             disabled={mutating}
             onClick={onConfirm}
-            className="
+            className={`
               rounded-full
-              bg-red-500
               px-4
               py-2.5
               text-sm
               font-semibold
               text-white
               transition
-              hover:bg-red-400
               disabled:opacity-40
-            "
+              ${confirmClass}
+            `}
           >
-            {mutating
-              ? 'Deleting...'
-              : 'Delete'}
+            {confirmLabel}
           </button>
         </div>
       </div>
@@ -1050,7 +973,7 @@ function PostStatusBadge({
 function MobileLabel({
   children,
 }: {
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <p
@@ -1072,67 +995,34 @@ function MobileLabel({
 function PostsLoading() {
   return (
     <div>
-      {Array.from({
-        length: 5,
-      }).map(
-        (_, index) => (
-          <div
-            key={index}
-            className="
-              flex
-              animate-pulse
-              gap-4
-              border-b
-              border-white/[0.06]
-              px-5
-              py-5
-            "
-          >
-            <div
-              className="
-                h-14
-                w-20
-                rounded-xl
-                bg-white/[0.06]
-              "
-            />
+      {Array.from({ length: 5 }).map((_, index) => (
+        <div
+          key={index}
+          className="
+            flex
+            animate-pulse
+            gap-4
+            border-b
+            border-white/[0.06]
+            px-5
+            py-5
+          "
+        >
+          <div className="h-14 w-20 rounded-xl bg-white/[0.06]" />
 
-            <div className="flex-1">
-              <div
-                className="
-                  h-3
-                  w-1/2
-                  rounded
-                  bg-white/[0.08]
-                "
-              />
-
-              <div
-                className="
-                  mt-3
-                  h-2
-                  w-1/4
-                  rounded
-                  bg-white/[0.04]
-                "
-              />
-            </div>
+          <div className="flex-1">
+            <div className="h-3 w-1/2 rounded bg-white/[0.08]" />
+            <div className="mt-3 h-2 w-1/4 rounded bg-white/[0.04]" />
           </div>
-        ),
-      )}
+        </div>
+      ))}
     </div>
   )
 }
 
 function PostsEmpty() {
   return (
-    <div
-      className="
-        px-6
-        py-16
-        text-center
-      "
-    >
+    <div className="px-6 py-16 text-center">
       <div
         className="
           mx-auto
@@ -1149,33 +1039,18 @@ function PostsEmpty() {
         <FileText size={18} />
       </div>
 
-      <h2
-        className="
-          mt-4
-          text-lg
-          font-semibold
-        "
-      >
+      <h2 className="mt-4 text-lg font-semibold">
         No matching posts
       </h2>
 
-      <p
-        className="
-          mt-2
-          text-sm
-          text-white/35
-        "
-      >
-        Try adjusting your search or
-        filters.
+      <p className="mt-2 text-sm text-white/35">
+        Try adjusting your search or filters.
       </p>
     </div>
   )
 }
 
-function getPostCategory(
-  post: AdminPostRecord,
-) {
+function getPostCategory(post: AdminPostRecord) {
   if (Array.isArray(post.category)) {
     return post.category[0] ?? null
   }
@@ -1183,25 +1058,16 @@ function getPostCategory(
   return post.category ?? null
 }
 
-function formatDate(
-  value: string,
-) {
+function formatDate(value: string) {
   const date = new Date(value)
 
-  if (
-    Number.isNaN(
-      date.getTime(),
-    )
-  ) {
+  if (Number.isNaN(date.getTime())) {
     return ''
   }
 
-  return new Intl.DateTimeFormat(
-    'en-PH',
-    {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    },
-  ).format(date)
+  return new Intl.DateTimeFormat('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date)
 }

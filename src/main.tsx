@@ -1,27 +1,42 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter } from 'react-router-dom'
-
-import App from './App'
-import { AuthProvider } from './context/AuthContext'
+import {
+  createBrowserRouter,
+  RouterProvider,
+} from 'react-router-dom'
 
 import './styles.css'
 
-const rootElement =
-  document.getElementById('root')
+import App from './App'
+import { ToastViewport } from './components/ui/ToastViewport'
+import { AuthProvider } from './context/AuthContext'
+import { ToastProvider } from './context/ToastContext'
 
-if (!rootElement) {
-  throw new Error(
-    'Root element was not found in the document.',
-  )
-}
+const router =
+  createBrowserRouter([
+    {
+      path: '*',
 
-createRoot(rootElement).render(
+      element: (
+        <ToastProvider>
+          <AuthProvider>
+            <App />
+
+            <ToastViewport />
+          </AuthProvider>
+        </ToastProvider>
+      ),
+    },
+  ])
+
+createRoot(
+  document.getElementById(
+    'root',
+  )!,
+).render(
   <StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
-    </BrowserRouter>
+    <RouterProvider
+      router={router}
+    />
   </StrictMode>,
 )
